@@ -138,10 +138,68 @@ type process struct {
 type processesMsg []process
 type errMsg struct{ err error }
 type killMsg struct{output string}
+// A connection. Contains a protocol type (typically tcp or udp), connection status, remote address and port,
+// and local address and port.
+type connection struct {
+	protocol string
+	status string
+
+	remotePort string
+	remoteAddress string
+
+	localPort string
+	localAddress string
+}
+
+// The settings struct. Contains all the settings for parsing and rendering the table
+type settings struct {
+	readOnly   bool           // Allow process termination
+	showClosed bool           // Allow closed ports to be displayed
+	listenOnly bool           // Filter to ports that are listening
+	columns    []table.Column // The columns that have been selected for rendering
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+// MODEL
+// The bubbletea model, where most of the processed information is stored, ready to be rendered.
+
+type model struct {
+	table     			table.Model    	// The table that gets rendered
+	rowStarts			[]int			// The end of each process's list of open ports
+	processes 			[]process      	// A slice of process structs
+	err       			error          	// The most recent error
+
+	// Settings are stored in the settings struct. Includes render and parsing settings
+	settings settings
+
+	// Used in help menu
+	keys       keyMap 			// The keymap used
+	help       help.Model		// The help bubble that gets rendered
+	inputStyle lipgloss.Style	// The style used when rendering everything
+
+	// TODO: Allow user to create custom styles? This might be better as a separate module/tool
+	// (if it doesn't exist yet).
+
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+// MESSAGES
+// Definitions for messages that get sent to bubbletea after processing I/O with tea.cmd
 
 // Util function to get the error text from an errMsg element
 func (e errMsg) Error() string { return e.err.Error() }
 
+type processesMsg struct{ 			// A struct comprised of process structs and table rows
+	processes []process
+	rows []table.Row
+	ends []int
+}
+type errMsg struct{ err error }		// An error message.
+type terminateMsg struct{} 			// The message returned when terminating a process doesn't error. This then results
+									// in another command being issued to get the latest slice of processes, which
+									// should have the terminated process removed if it was successful.
 
 // ---------------------------------------------------------------------------------------------------------------------
 // All the stuff relating to the bubbletea TUI
@@ -226,6 +284,329 @@ type model struct {
 }
 
 // We want to get the processes on first run, so send that on init
+// checkProcesses() is the primary function that returns a bubbletea message. It handles all the other functions,
+// processes their outputs, then passes those outputs to other functions.
+// It takes an input of the render and parsing settings, so that all the parsing and conversion from process structs to
+// strings is done inside a goroutine.
+
+func checkProcesses(settingsInfo settings) tea.Cmd {
+	return func() tea.Msg {
+
+		out, err := getLsof()
+
+
+		if err != nil {
+			if !(err.Error() == "1") {
+
+				return processesMsg{nil, nil, nil} // No processes, so return empty process slice
+			}
+			// Error if we fail, rather than running extra code
+			return errMsg{err}
+		}
+
+		// We have a string that represents the `lsof` output. Parse that
+		// into a slice of process structs with the parseLsof() function
+		parsed, err := parseLsof(out, settingsInfo)
+
+		if err != nil {
+			return errMsg{err}
+		}
+
+		formatted, ends, err := formatLsof(parsed,settingsInfo)
+
+		return processesMsg{parsed, formatted, ends}
+
+	}
+}
+
+
+
+// getLsof() runs the desired command and returns the output as a raw string or an error
+func getLsof() (string, error) {
+	// Set the command to use and get the output of that command (as well as any error codes we may encounter)
+	// Command is `lsof -i -Pn -F cPnpLT`
+	cmd := exec.Command("lsof", "-i", "-Pn", "-F", "cPnpLT")
+	out, err := cmd.Output()
+
+	// If the error code is 1, then there are no processes with open ports.
+	// Assume anything else is an actual error
+	if err != nil {
+		// There's an error, return an empty string & the error. We'll parse error code 1 (no processes found) later on.
+		return "", err
+	}
+
+	// We have valid data, so return it! The out variable is a byte array, so convert it to a string first.
+	return string(out), err
+
+}
+
+// parseLsof() takes the raw string output of lsof and converts it to a slice of process structs based on the parsing
+// criteria given to it in a settings struct
+func parseLsof(raw string, options settings) ([]process, error) {
+	// Input will be a string. Processes are separated by \np (newline, then 'p' character)
+	separated := strings.Split(raw, "\np")
+
+	// Create a new slice of processes
+	allProcesses := make([]process,0)
+
+
+	// For each process
+	for processIndex, processString := range separated {
+		// Start by splitting process info by \nf (newline, then 'f' character) to get each port open as a separate item
+		// in a slice, as well as the PID, command, and user in the 1st item in the array
+		connectionSplit := strings.Split(processString, "\nf")
+
+		// there will always be a 1st (index 0) element, which should contain the following lines:
+		// 88917 (process ID - no initial character as we split using that character earlier EXCEPT in process
+		// with index 0, as no newline before it)
+		// cProcessName
+		// LUserName
+
+		// So get that element, and split by newlines. Check if index is 0, and if so, handle first line to include the
+		// 'p' character
+
+		processInfo := strings.Split(connectionSplit[0], "\n")
+		if processIndex == 0 {
+			// remove first character from the first line in processInfo if we're on index 0
+			processInfo[0] = processInfo[0][1:]
+		}
+		pid, err := strconv.Atoi(processInfo[0])
+		if err != nil {
+			return nil, err
+		}
+
+		cmd := processInfo[1][1:]
+		user := processInfo[2][1:]
+
+		// Now onto handling ports and addresses. Looping through each one to parse it.
+		allConnections := make([]connection, 0)
+
+		// Ignore first element in array, as we've already parsed it
+		for _, connectionString := range connectionSplit[1:] {
+			valid := true // Store if the connection is valid based on the parsing settings
+
+			tmpConnection := connection{}
+
+			connectionInfo := strings.Split(connectionString, "\n")
+			// A port string will consist of a file descriptor (unused), a connection type (TCP or UDP), the
+			// information on the connection (localAddress:localPort->remoteAddress:remotePort), the connection status
+			// (established, listening, closed, or an empty field), and size of the read/send buffers (unused).
+
+			// Loop through each property in the connection info
+
+
+			for _, connectionProperty := range connectionInfo {
+				if len(connectionProperty) > 0 {
+
+				switch string(connectionProperty[0]){
+					// Switch-case for each identifier (with an additional nested switch-case for the "T**= options)
+					case "P":
+						// P: Protocol
+						tmpConnection.protocol = connectionProperty[1:]
+						break
+
+					case "n":
+						// n: Local and remote addresses and ports
+
+						if connectionProperty[1:] == "*:*" {
+							// *:* usually indicates some unimportant connection, so we just make that connection invalid
+							// This might be wrong! If you want to submit an issue about this, then feel free!
+							valid = false
+
+						} else {
+
+							splitLocalAndRemote := strings.Split(connectionProperty[1:], "->")
+							// If there is a ->, then there is a clear local and remote connection
+							if len(splitLocalAndRemote) > 1 {
+								// Should only be 2 elements in that array: local and remote addr:port pairs
+								splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
+								splitRemoteAddressAndPort := strings.Split(splitLocalAndRemote[1], ":")
+
+								// Set the struct's data to the parsed output
+								tmpConnection.localAddress = splitLocalAddressAndPort[0]
+								tmpConnection.localPort = splitLocalAddressAndPort[1]
+								tmpConnection.remoteAddress = splitRemoteAddressAndPort[0]
+								tmpConnection.remotePort = splitRemoteAddressAndPort[1]
+
+							} else {
+								// if not, then assume we're looking at a local port and address
+								// Note here, that might be an incorrect assumption, please correct me if I'm wrong :)
+
+								splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
+								tmpConnection.localAddress = splitLocalAddressAndPort[0]
+
+								// As localPort is a string, we can handle ports like '*' without conversions.
+								tmpConnection.localPort = splitLocalAddressAndPort[1]
+
+							}
+						}
+						break
+
+					case "T":
+						if connectionProperty[0:4]  == "TST=" {
+							// TST= : Connection status
+							tmpConnection.status = connectionProperty[4:]
+
+
+							// If the port isn't closed OR we have enabled closed ports
+							if connectionProperty[4:] == "CLOSED" && options.showClosed {
+								valid = false
+							}
+							if options.listenOnly && connectionProperty[4:] != "LISTEN" {
+								valid = false
+							}
+						}
+						break
+
+					}
+				}
+
+
+
+			}
+
+			// That connection has been parsed! Time to add it to the slice.
+			if valid {
+				allConnections = append(allConnections, tmpConnection) // Add the connection to the slice
+			}
+		}
+
+		// All elements of a process have now been parsed, so create a new process struct with that information and
+		// append it to the allProcesses slice.
+
+		// If the process still has a valid connection in it.
+		if len(allConnections) > 0 {
+			// Then add it to the slice
+			allProcesses = append(allProcesses, process{
+				id: pid,
+				name: cmd,
+				username: user,
+				connections: allConnections,
+			})
+		}
+
+	}
+
+	// Gone through all processes, so now return the final slice of process structs
+	return allProcesses, nil
+}
+
+// formatLsof() takes the slice of process structs given and converts to the table rows that get rendered
+func formatLsof(processes []process, options settings) ([]table.Row, []int, error) {
+	// Loop through each process, and create a row based on the columns we have, then add that to a row slice
+	var rows []table.Row
+	var rowStarts []int
+
+	for _, proc := range processes {
+		rowStarts = append(rowStarts, len(rows))
+
+		for connIndex, conn := range proc.connections {
+
+			row := make(table.Row, len(options.columns))
+
+			// Loop through each column in options.columns and use a switch-case on its title to get the value to set at its index
+			for columnIndex, column := range options.columns {
+
+				value := ""
+
+				switch column.Title {
+
+				case "PID":
+					if connIndex == 0 {
+						value = strconv.Itoa(proc.id)
+					}
+					break
+
+				case "Name":
+					if connIndex == 0 {
+						value = proc.name
+					}
+
+					break
+				case "Owner":
+					if connIndex == 0 {
+						value = proc.username
+					}
+					break
+
+				case "Protocol":
+					value = conn.protocol
+					break
+
+				case "Address":
+					// If there is a remote address, use that
+					if conn.remoteAddress != "" {
+						value = conn.remoteAddress
+					} else {
+						// If not, then use local address
+						value = conn.localAddress
+					}
+					break
+
+				case "Port":
+					if conn.remotePort != "" {
+						value = conn.remotePort
+					} else {
+						value = conn.localPort
+					}
+					break
+
+				case "Local Address":
+					value = conn.localAddress
+					break
+				case "Local Port":
+					value = conn.localPort
+					break
+				case "Remote Address":
+					value = conn.remoteAddress
+					break
+				case "Remote Port":
+					value = conn.remotePort
+					break
+
+				case "Status":
+					value = strings.ToTitle(conn.status)
+					break
+
+
+				}
+				row[columnIndex] = value
+
+			}
+			rows = append(rows, row)
+
+		}
+
+
+
+
+	}
+
+	return rows, rowStarts, nil
+
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+// Func to create a command that will terminate a given process ID
+func terminateProcess(id int) tea.Cmd {
+	return func() tea.Msg {
+		pid := id
+		cmd := exec.Command("kill", strconv.Itoa(pid))
+
+		// Terminate the process with that ID. Don't care about the output, so just ignore it
+		err := cmd.Run()
+
+		if err != nil {
+			return errMsg{err}
+		}
+		return terminateMsg{}
+	}
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
+// All the stuff relating to the bubbletea TUI. This includes the Init, Update, and View functions.
 
 func (m model) Init() tea.Cmd {
 	return checkProcesses
@@ -234,6 +615,21 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case processesMsg:
+		// We have processes, lets update the model to use the new processes
+		m.table.SetRows(msg.rows) // Convert the array of process structs to text for use in rendering
+		m.rowStarts = msg.ends // The starts of each process's set of rows
+		m.processes = msg.processes
+		return m, nil
+
+	case terminateMsg:
+		// terminate process worked, so rerender processes table
+		return m, checkProcesses(m.settings)
+
+	case errMsg:
+		m.err = msg.err
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		// If we set a width on the help menu it can gracefully truncate
 		// its view as needed.
@@ -243,6 +639,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 
+		case key.Matches(msg, keys.Terminate):
+			if len(m.processes) > 0 {
+				// Get the id of the currently highlighted process and terminate that process
+				cursor := m.table.Cursor()
+				for i := 0; i < (len(m.rowStarts) - 1); i += 1 {
+					// loop through each row start from 0 to end
+					if m.rowStarts[i] >= cursor &&  m.rowStarts[i+1] < cursor {
+						// then it's process at position i
+						return m, terminateProcess(m.processes[i].id)
+					}
+				}
+				// If this somehow breaks, then I think it's always the last one in the array
+				return m, terminateProcess(m.processes[len(m.processes)-1].id)
+			}
+			return m, nil
 
 		case "/":
 			m.help.ShowAll = !m.help.ShowAll
