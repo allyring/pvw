@@ -63,9 +63,10 @@ type settings struct {
 // The bubbletea model, where most of the processed information is stored, ready to be rendered.
 
 type model struct {
-	table     	table.Model    	// The table that gets rendered
-	processes 	[]process      	// A slice of process structs
-	err       	error          	// The most recent error
+	table     			table.Model    	// The table that gets rendered
+	rowStarts			[]int			// The end of each process's list of open ports
+	processes 			[]process      	// A slice of process structs
+	err       			error          	// The most recent error
 
 	// Settings are stored in the settings struct. Includes render and parsing settings
 	settings settings
@@ -91,6 +92,7 @@ func (e errMsg) Error() string { return e.err.Error() }
 type processesMsg struct{ 			// A struct comprised of process structs and table rows
 	processes []process
 	rows []table.Row
+	ends []int
 }
 type errMsg struct{ err error }		// An error message.
 type terminateMsg struct{} 			// The message returned when terminating a process doesn't error. This then results
@@ -189,7 +191,7 @@ func checkProcesses(settingsInfo settings) tea.Cmd {
 		if err != nil {
 			if !(err.Error() == "1") {
 
-				return processesMsg{nil, nil} // No processes, so return empty process slice
+				return processesMsg{nil, nil, nil} // No processes, so return empty process slice
 			}
 			// Error if we fail, rather than running extra code
 			return errMsg{err}
@@ -203,9 +205,9 @@ func checkProcesses(settingsInfo settings) tea.Cmd {
 			return errMsg{err}
 		}
 
-		formatted, err := formatLsof(parsed,settingsInfo)
+		formatted, ends, err := formatLsof(parsed,settingsInfo)
 
-		return processesMsg{parsed, formatted}
+		return processesMsg{parsed, formatted, ends}
 
 	}
 }
@@ -383,11 +385,13 @@ func parseLsof(raw string, options settings) ([]process, error) {
 }
 
 // formatLsof() takes the slice of process structs given and converts to the table rows that get rendered
-func formatLsof(processes []process, options settings) ([]table.Row, error) {
+func formatLsof(processes []process, options settings) ([]table.Row, []int, error) {
 	// Loop through each process, and create a row based on the columns we have, then add that to a row slice
 	var rows []table.Row
+	var rowStarts []int
 
 	for _, proc := range processes {
+		rowStarts = append(rowStarts, len(rows))
 
 		for connIndex, conn := range proc.connections {
 
@@ -471,7 +475,7 @@ func formatLsof(processes []process, options settings) ([]table.Row, error) {
 
 	}
 
-	return rows, nil
+	return rows, rowStarts, nil
 
 }
 
@@ -514,6 +518,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case processesMsg:
 		// We have processes, lets update the model to use the new processes
 		m.table.SetRows(msg.rows) // Convert the array of process structs to text for use in rendering
+		m.rowStarts = msg.ends // The starts of each process's set of rows
 		m.processes = msg.processes
 		return m, nil
 
@@ -535,8 +540,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, checkProcesses(m.settings)
 
 		case key.Matches(msg, keys.Terminate):
-			// Get the id of the currently highlighted process and terminate that process
-			return m, terminateProcess(m.processes[m.table.Cursor()].id)
+			if len(m.processes) > 0 {
+				// Get the id of the currently highlighted process and terminate that process
+				cursor := m.table.Cursor()
+				for i := 0; i < (len(m.rowStarts) - 1); i += 1 {
+					// loop through each row start from 0 to end
+					if m.rowStarts[i] >= cursor &&  m.rowStarts[i+1] < cursor {
+						// then it's process at position i
+						return m, terminateProcess(m.processes[i].id)
+					}
+				}
+				// If this somehow breaks, then I think it's always the last one in the array
+				return m, terminateProcess(m.processes[len(m.processes)-1].id)
+			}
+			return m, nil
 
 		case key.Matches(msg, keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
