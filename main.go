@@ -723,6 +723,17 @@ func main() {
 	if runtime.GOOS == "windows" {
 		fmt.Println("Sorry, pvw is UNIX only right now.")
 	} else {
+		// Check if lsof is installed
+		cmd := exec.Command("/bin/sh", "-c", "command -v lsof")
+		err := cmd.Run()
+
+		if err != nil {
+			fmt.Println("Error running pvw: lsof command does not exist. Please install lsof with your package manager.")
+			os.Exit(1)
+
+		}
+
+
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			fmt.Println("Error running pvw: ", err)
 			os.Exit(1)
