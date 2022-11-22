@@ -34,6 +34,7 @@ import (
 type process struct {
 	id int
 	name string
+	directory string
 	connections []connection
 	username string
 }
@@ -56,6 +57,7 @@ type settings struct {
 	readOnly   bool           // Allow process termination
 	showClosed bool           // Allow closed ports to be displayed
 	listenOnly bool           // Filter to ports that are listening
+	getCwd 	   bool			  // Enable getting the CWD of a process
 	columns    []table.Column // The columns that have been selected for rendering
 }
 
@@ -143,8 +145,6 @@ var keys = keyMap{
 	),
 }
 
-
-
 // ---------------------------------------------------------------------------------------------------------------------
 
 // Help functions. Used in creating the help menu
@@ -183,7 +183,6 @@ var baseStyle = lipgloss.NewStyle().
 // processes their outputs, then passes those outputs to other functions.
 // It takes an input of the render and parsing settings, so that all the parsing and conversion from process structs to
 // strings is done inside a goroutine.
-
 func checkProcesses(settingsInfo settings) tea.Cmd {
 	return func() tea.Msg {
 
@@ -214,8 +213,6 @@ func checkProcesses(settingsInfo settings) tea.Cmd {
 	}
 }
 
-
-
 // getLsof() runs the desired command and returns the output as a raw string or an error
 func getLsof() (string, error) {
 	// Set the command to use and get the output of that command (as well as any error codes we may encounter)
@@ -235,6 +232,33 @@ func getLsof() (string, error) {
 
 }
 
+// getCwd() gets the working directory of a process from a PID
+func getCwd(pid int) (string, error) {
+	pidString := strconv.Itoa(pid)
+
+	// Gets the process' open files, including current working directory.
+	// Command is `lsof -p PID -F n`
+	cmd := exec.Command("lsof", "-p", pidString, "-F", "n")
+	out, err := cmd.Output()
+
+	if err != nil {
+		return "", err
+	}
+
+	// The field can be identified with the string 'fcwd\nn', then the next section until a newline
+	// So split by that string
+	cwdSplit := strings.Split(string(out), "fcwd\nn")
+	if len(cwdSplit) < 1 {
+		// No cwd, return empty and nil
+		return "", nil
+	}
+
+	// If there is one, we have a cwd, split the 2nd element in the array by newlines, then select the first bit of that
+	// to get the cwd as a string
+	return strings.Split(cwdSplit[1],"\n")[0], nil
+
+}
+
 // parseLsof() takes the raw string output of lsof and converts it to a slice of process structs based on the parsing
 // criteria given to it in a settings struct
 func parseLsof(raw string, options settings) ([]process, error) {
@@ -243,7 +267,6 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 	// Create a new slice of processes
 	allProcesses := make([]process,0)
-
 
 	// For each process
 	for processIndex, processString := range separated {
@@ -269,6 +292,17 @@ func parseLsof(raw string, options settings) ([]process, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		finalCwd := ""
+		// We have the pid, so we can use that to get the CWD.
+		if options.getCwd {
+			cwd, err := getCwd(pid)
+			if err != nil {
+				return nil, err
+			}
+			finalCwd = cwd
+		}
+
 
 		cmd := processInfo[1][1:]
 		user := processInfo[2][1:]
@@ -376,6 +410,7 @@ func parseLsof(raw string, options settings) ([]process, error) {
 				id: pid,
 				name: cmd,
 				username: user,
+				directory: finalCwd,
 				connections: allConnections,
 			})
 		}
@@ -416,8 +451,14 @@ func formatLsof(processes []process, options settings) ([]table.Row, []int, erro
 					if connIndex == 0 {
 						value = proc.name
 					}
-
 					break
+
+				case "Directory":
+					if connIndex == 0 {
+						value = proc.directory
+					}
+					break
+
 				case "Owner":
 					if connIndex == 0 {
 						value = proc.username
@@ -506,7 +547,7 @@ func terminateProcess(id int) tea.Cmd {
 func (m model) Init() tea.Cmd {
 	// When we first run, we want to get all the processes currently running
 	return checkProcesses(m.settings)
-	//return nil
+
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -542,18 +583,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, checkProcesses(m.settings)
 
 		case key.Matches(msg, keys.Terminate):
+			// If there are any processes left:
 			if len(m.processes) > 0 {
 				// Get the id of the currently highlighted process and terminate that process
 				cursor := m.table.Cursor()
-				for i := 0; i < (len(m.rowStarts) - 1); i += 1 {
-					// loop through each row start from 0 to end
-					if m.rowStarts[i] >= cursor &&  m.rowStarts[i+1] < cursor {
-						// then it's process at position i
+
+				// Use the start of each process' set of rows to get the PID to kill.
+				i := 0
+				for i < (len(m.processes)){
+					if i >= cursor {
+						// We now have the index of the process in m.processes that we need the PID from stored in i
 						return m, terminateProcess(m.processes[i].id)
 					}
+
+					i += 1
 				}
-				// If this somehow breaks, then I think it's always the last one in the array
-				return m, terminateProcess(m.processes[len(m.processes)-1].id)
+				// If it breaks, do nothing
+				return m, nil
 			}
 			return m, nil
 
@@ -563,15 +609,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
 
-
 		}
-
-
-
 	}
-
-
-
 
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
@@ -609,10 +648,14 @@ func main() {
 	flagOwner := pflag.BoolP("show-owner","o",false, "Show the owner of processes")
 	flagName := pflag.BoolP("show-process-name", "n", false, "Show the name of processes")
 	flagPID := pflag.BoolP("show-process-id", "i", true, "Show the process ID")
+	flagDirectory := pflag.BoolP("show-cwd", "d", false, "Show the process' current working directory")
+
 
 	// Process filtering options (used in parseLsof())
 	flagListeningOnly := pflag.BoolP("listen-only","l",false,"Only show listening ports")
 	flagShowClosed := pflag.BoolP("show-closed", "c", false, "Show closed ports")
+
+
 
 	// Read-only mode (prevents process termination, passed to model)
 	flagReadOnly := pflag.BoolP("read-only",  "r", false, "Read-only mode - prevents processes from being terminated in the TUI")
@@ -627,6 +670,7 @@ func main() {
 		// Process information
 		table.Column{Title: "PID", Width: 5}:      			*flagPID,
 		table.Column{Title: "Name", Width: 10}:    			*flagName,
+		table.Column{Title: "Directory", Width: 16}:    	*flagDirectory,
 		table.Column{Title: "Owner", Width: 8}:    			*flagOwner,
 
 		// Connection information
@@ -647,6 +691,7 @@ func main() {
 	columnIndexes := []table.Column{
 		{Title: "PID", Width: 5},
 		{Title: "Name", Width: 10},
+		{Title: "Directory", Width: 16},
 		{Title: "Owner", Width: 8},
 
 		// Connection information
@@ -706,6 +751,7 @@ func main() {
 		readOnly:   *flagReadOnly,
 		showClosed: *flagShowClosed,
 		listenOnly: *flagListeningOnly,
+		getCwd: 	*flagDirectory,
 		columns:    columns,
 	}
 
