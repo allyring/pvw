@@ -5,8 +5,10 @@ package main
 import (
 	"fmt"
 	"runtime"
+	"golang.org/x/exp/slices"
 
-	// All the Charm modules we need
+
+// All the Charm modules we need
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/table"
@@ -54,11 +56,13 @@ type connection struct {
 
 // The settings struct. Contains all the settings for parsing and rendering the table
 type settings struct {
-	readOnly   bool           // Allow process termination
-	showClosed bool           // Allow closed ports to be displayed
-	listenOnly bool           // Filter to ports that are listening
-	getCwd 	   bool			  // Enable getting the CWD of a process
-	columns    []table.Column // The columns that have been selected for rendering
+	readOnly   bool           	// Allow process termination
+	showClosed bool           	// Allow closed ports to be displayed
+	listenOnly bool           	// Filter to ports that are listening
+	getCwd 	   bool			  	// Enable getting the CWD of a process
+	columns    []table.Column 	// The columns that have been selected for rendering
+	portFilter []string			// The port numbers to filter by - don't filter if empty
+	nameFilter []string			// The port names to filter by - don't filter if empty
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -67,18 +71,18 @@ type settings struct {
 // The bubbletea model, where most of the processed information is stored, ready to be rendered.
 
 type model struct {
-	table     			table.Model    	// The table that gets rendered
-	rowStarts			[]int			// The end of each process's list of open ports
-	processes 			[]process      	// A slice of process structs
-	err       			error          	// The most recent error
+	table     	table.Model    	// The table that gets rendered
+	rowStarts	[]int			// The end of each process's list of open ports
+	processes 	[]process      	// A slice of process structs
+	err       	error          	// The most recent error
 
 	// Settings are stored in the settings struct. Includes render and parsing settings
-	settings settings
+	settings 	settings
 
 	// Used in help menu
-	keys       keyMap 			// The keymap used
-	help       help.Model		// The help bubble that gets rendered
-	inputStyle lipgloss.Style	// The style used when rendering everything
+	keys       	keyMap 			// The keymap used
+	help       	help.Model		// The help bubble that gets rendered
+	inputStyle 	lipgloss.Style	// The style used when rendering everything
 
 	// TODO: Allow user to create custom styles? This might be better as a separate module/tool
 	// (if it doesn't exist yet).
@@ -100,8 +104,8 @@ type processesMsg struct{ 			// A struct comprised of process structs and table 
 }
 type errMsg struct{ err error }		// An error message.
 type terminateMsg struct{} 			// The message returned when terminating a process doesn't error. This then results
-// in another command being issued to get the latest slice of processes, which
-// should have the terminated process removed if it was successful.
+									// in another command being issued to get the latest slice of processes, which
+									// should have the terminated process removed if it was successful.
 
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -305,116 +309,137 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 
 		cmd := processInfo[1][1:]
-		user := processInfo[2][1:]
 
-		// Now onto handling ports and addresses. Looping through each one to parse it.
-		allConnections := make([]connection, 0)
+		// If we don't have a process name filter OR if the current name contains one of the valid names
+		if (!(len(options.nameFilter) > 0)) || (slices.Contains(options.nameFilter,cmd)) {
 
-		// Ignore first element in array, as we've already parsed it
-		for _, connectionString := range connectionSplit[1:] {
-			valid := true // Store if the connection is valid based on the parsing settings
+			user := processInfo[2][1:]
 
-			tmpConnection := connection{}
+			// Now onto handling ports and addresses. Looping through each one to parse it.
+			allConnections := make([]connection, 0)
 
-			connectionInfo := strings.Split(connectionString, "\n")
-			// A port string will consist of a file descriptor (unused), a connection type (TCP or UDP), the
-			// information on the connection (localAddress:localPort->remoteAddress:remotePort), the connection status
-			// (established, listening, closed, or an empty field), and size of the read/send buffers (unused).
+			// Ignore first element in array, as we've already parsed it
+			for _, connectionString := range connectionSplit[1:] {
+				valid := true // Store if the connection is valid based on the parsing settings
 
-			// Loop through each property in the connection info
+				tmpConnection := connection{}
+
+				connectionInfo := strings.Split(connectionString, "\n")
+				// A port string will consist of a file descriptor (unused), a connection type (TCP or UDP), the
+				// information on the connection (localAddress:localPort->remoteAddress:remotePort), the connection status
+				// (established, listening, closed, or an empty field), and size of the read/send buffers (unused).
+
+				// Loop through each property in the connection info
 
 
-			for _, connectionProperty := range connectionInfo {
-				if len(connectionProperty) > 0 {
+				for _, connectionProperty := range connectionInfo {
+					if len(connectionProperty) > 0 {
 
-					switch string(connectionProperty[0]){
-					// Switch-case for each identifier (with an additional nested switch-case for the "T**= options)
-					case "P":
-						// P: Protocol
-						tmpConnection.protocol = connectionProperty[1:]
-						break
+						switch string(connectionProperty[0]){
+						// Switch-case for each identifier (with an additional nested switch-case for the "T**= options)
+						case "P":
+							// P: Protocol
+							tmpConnection.protocol = connectionProperty[1:]
+							break
 
-					case "n":
-						// n: Local and remote addresses and ports
+						case "n":
+							// n: Local and remote addresses and ports
 
-						if connectionProperty[1:] == "*:*" {
-							// *:* usually indicates some unimportant connection, so we just make that connection invalid
-							// This might be wrong! If you want to submit an issue about this, then feel free!
-							valid = false
-
-						} else {
-
-							splitLocalAndRemote := strings.Split(connectionProperty[1:], "->")
-							// If there is a ->, then there is a clear local and remote connection
-							if len(splitLocalAndRemote) > 1 {
-								// Should only be 2 elements in that array: local and remote addr:port pairs
-								splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
-								splitRemoteAddressAndPort := strings.Split(splitLocalAndRemote[1], ":")
-
-								// Set the struct's data to the parsed output
-								tmpConnection.localAddress = splitLocalAddressAndPort[0]
-								tmpConnection.localPort = splitLocalAddressAndPort[1]
-								tmpConnection.remoteAddress = splitRemoteAddressAndPort[0]
-								tmpConnection.remotePort = splitRemoteAddressAndPort[1]
+							if connectionProperty[1:] == "*:*" {
+								// *:* usually indicates some unimportant connection, so we just make that connection invalid
+								// This might be wrong! If you want to submit an issue about this, then feel free!
+								valid = false
 
 							} else {
-								// if not, then assume we're looking at a local port and address
-								// Note here, that might be an incorrect assumption, please correct me if I'm wrong :)
 
-								splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
-								tmpConnection.localAddress = splitLocalAddressAndPort[0]
+								splitLocalAndRemote := strings.Split(connectionProperty[1:], "->")
+								// If there is a ->, then there is a clear local and remote connection
+								if len(splitLocalAndRemote) > 1 {
+									// Should only be 2 elements in that array: local and remote addr:port pairs
+									splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
+									splitRemoteAddressAndPort := strings.Split(splitLocalAndRemote[1], ":")
 
-								// As localPort is a string, we can handle ports like '*' without conversions.
-								tmpConnection.localPort = splitLocalAddressAndPort[1]
+									// Set the struct's data to the parsed output
+									tmpConnection.localAddress = splitLocalAddressAndPort[0]
+									tmpConnection.localPort = splitLocalAddressAndPort[1]
+									tmpConnection.remoteAddress = splitRemoteAddressAndPort[0]
+									tmpConnection.remotePort = splitRemoteAddressAndPort[1]
+
+
+								} else {
+									// if not, then assume we're looking at a local port and address
+									// Note here, that might be an incorrect assumption, please correct me if I'm wrong :)
+
+									splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
+									tmpConnection.localAddress = splitLocalAddressAndPort[0]
+
+									// As localPort is a string, we can handle ports like '*' without conversions.
+									tmpConnection.localPort = splitLocalAddressAndPort[1]
+
+								}
+
+								// Check validity with ports
+
+								// If we have ports to filter by
+								if len(options.portFilter) > 0 {
+
+									// If neither remote nor local ports are in the filter then it's invalid
+									if !(slices.Contains(options.portFilter,tmpConnection.localPort) ||
+										 slices.Contains(options.portFilter,tmpConnection.remotePort)) {
+										valid = false
+									}
+								}
+
 
 							}
+
+							break
+
+						case "T":
+							if connectionProperty[0:4]  == "TST=" {
+								// TST= : Connection status
+								tmpConnection.status = connectionProperty[4:]
+
+
+								// If the port isn't closed OR we have enabled closed ports
+								if connectionProperty[4:] == "CLOSED" && options.showClosed {
+									valid = false
+								}
+								if options.listenOnly && connectionProperty[4:] != "LISTEN" {
+									valid = false
+								}
+							}
+							break
+
 						}
-						break
-
-					case "T":
-						if connectionProperty[0:4]  == "TST=" {
-							// TST= : Connection status
-							tmpConnection.status = connectionProperty[4:]
-
-
-							// If the port isn't closed OR we have enabled closed ports
-							if connectionProperty[4:] == "CLOSED" && options.showClosed {
-								valid = false
-							}
-							if options.listenOnly && connectionProperty[4:] != "LISTEN" {
-								valid = false
-							}
-						}
-						break
-
 					}
+
+
+
 				}
 
-
-
+				// That connection has been parsed! Time to add it to the slice.
+				if valid {
+					allConnections = append(allConnections, tmpConnection) // Add the connection to the slice
+				}
 			}
 
-			// That connection has been parsed! Time to add it to the slice.
-			if valid {
-				allConnections = append(allConnections, tmpConnection) // Add the connection to the slice
+			// All elements of a process have now been parsed, so create a new process struct with that information and
+			// append it to the allProcesses slice.
+
+			// If the process still has a valid connection in it.
+			if len(allConnections) > 0 {
+				// Then add it to the slice
+				allProcesses = append(allProcesses, process{
+					id: pid,
+					name: cmd,
+					username: user,
+					directory: finalCwd,
+					connections: allConnections,
+				})
 			}
+
 		}
-
-		// All elements of a process have now been parsed, so create a new process struct with that information and
-		// append it to the allProcesses slice.
-
-		// If the process still has a valid connection in it.
-		if len(allConnections) > 0 {
-			// Then add it to the slice
-			allProcesses = append(allProcesses, process{
-				id: pid,
-				name: cmd,
-				username: user,
-				directory: finalCwd,
-				connections: allConnections,
-			})
-		}
-
 	}
 
 	// Gone through all processes, so now return the final slice of process structs
@@ -635,7 +660,6 @@ func (m model) View() string {
 
 	return "\n" + final + strings.Repeat("\n", height) + helpView
 
-
 }
 
 func main() {
@@ -655,13 +679,17 @@ func main() {
 	flagListeningOnly := pflag.BoolP("listen-only","l",false,"Only show listening ports")
 	flagShowClosed := pflag.BoolP("show-closed", "c", false, "Show closed ports")
 
-
-
 	// Read-only mode (prevents process termination, passed to model)
 	flagReadOnly := pflag.BoolP("read-only",  "r", false, "Read-only mode - prevents processes from being terminated in the TUI")
 
+	// A flag to set a comma separated list of ports to filter by
+	flagPortFilter := pflag.StringSlice("ports",nil,"Port filter - only shows the selected ports. Accepts a list of port numbers, separated by commas.")
+
 	// Help command should be built-in, and populates based in usage field in pflag.TypeP()
 	pflag.Parse()
+
+	// All other args act as a process name filter
+	cmdArgs := pflag.Args()
 
 	// Create a settings map with columns and bool values. Note that pflag makes the variables pointers,
 	// hence the need for *variable
@@ -746,6 +774,7 @@ func main() {
 		Bold(false)
 	t.SetStyles(s)
 
+
 	// Create settings struct for parsing settings and render columns
 	parseAndRenderSettings := settings{
 		readOnly:   *flagReadOnly,
@@ -753,6 +782,8 @@ func main() {
 		listenOnly: *flagListeningOnly,
 		getCwd: 	*flagDirectory,
 		columns:    columns,
+		nameFilter: cmdArgs,
+		portFilter: *flagPortFilter,
 	}
 
 	// Create final model struct
@@ -787,7 +818,5 @@ func main() {
 			os.Exit(1)
 		}
 	}
-
-
 
 }
