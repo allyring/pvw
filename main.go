@@ -4,14 +4,14 @@ package main
 
 import (
 	"fmt"
-	"runtime"
 	"golang.org/x/exp/slices"
+	"runtime"
 
-
-// All the Charm modules we need
+	// All the Charm modules we need
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/table"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -56,13 +56,18 @@ type connection struct {
 
 // The settings struct. Contains all the settings for parsing and rendering the table
 type settings struct {
-	readOnly   bool           	// Allow process termination
-	showClosed bool           	// Allow closed ports to be displayed
-	listenOnly bool           	// Filter to ports that are listening
-	getCwd 	   bool			  	// Enable getting the CWD of a process
-	columns    []table.Column 	// The columns that have been selected for rendering
-	portFilter []string			// The port numbers to filter by - don't filter if empty
-	nameFilter []string			// The port names to filter by - don't filter if empty
+	readOnly   		bool           	// Allow process termination
+	showClosed 		bool           	// Allow closed ports to be displayed
+	listenOnly 		bool           	// Filter to ports that are listening
+	getCwd 	   		bool			// Enable getting the CWD of a process
+
+	columns    		[]table.Column 	// The columns that have been selected for rendering
+
+	portFilter 		[]string		// The port numbers to filter by - don't filter if empty
+	nameFilter 		[]string		// The port names to filter by - don't filter if empty
+
+	searchTerm 		string			// The search term - gets added onto the nameFilter if not an empty string
+	displaySearch 	bool			// Whether to display the search bar or not
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -75,9 +80,13 @@ type model struct {
 	rowStarts	[]int			// The end of each process's list of open ports
 	processes 	[]process      	// A slice of process structs
 	err       	error          	// The most recent error
+	losfOut		string 			// The most recent lsof output as plaintext
 
 	// Settings are stored in the settings struct. Includes render and parsing settings
 	settings 	settings
+
+	// Text input items
+	textInput textinput.Model
 
 	// Used in help menu
 	keys       	keyMap 			// The keymap used
@@ -101,6 +110,7 @@ type processesMsg struct{ 			// A struct comprised of process structs and table 
 	processes []process
 	rows []table.Row
 	ends []int
+	raw  string
 }
 type errMsg struct{ err error }		// An error message.
 type terminateMsg struct{} 			// The message returned when terminating a process doesn't error. This then results
@@ -112,14 +122,17 @@ type terminateMsg struct{} 			// The message returned when terminating a process
 // Keybindings. Includes all the keys that can be pressed.
 
 type keyMap struct {
-	Up      key.Binding
-	Down    key.Binding
+	Up      	key.Binding
+	Down    	key.Binding
 
-	Terminate    key.Binding
-	Refresh key.Binding
+	Terminate   key.Binding
+	Refresh 	key.Binding
 
-	Help    key.Binding
-	Quit    key.Binding
+	Search		key.Binding
+	Escape		key.Binding
+
+	Help    	key.Binding
+	Quit    	key.Binding
 }
 
 var keys = keyMap{
@@ -138,6 +151,14 @@ var keys = keyMap{
 	Refresh: key.NewBinding(
 		key.WithKeys("r"),
 		key.WithHelp("r", "refresh the list of processes"),
+	),
+	Escape: key.NewBinding(
+		key.WithKeys("esc"),
+		key.WithHelp("esc", "close the search bar"),
+		),
+	Search: key.NewBinding(
+		key.WithKeys("/"),
+		key.WithHelp("/","toggle the search bar"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),
@@ -165,7 +186,8 @@ func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down},
 		{k.Refresh, k.Help},
-		{k.Terminate, k.Quit},
+		{k.Terminate, k.Search},
+		{k.Quit},
 	}
 }
 
@@ -196,7 +218,7 @@ func checkProcesses(settingsInfo settings) tea.Cmd {
 		if err != nil {
 			if !(err.Error() == "1") {
 
-				return processesMsg{nil, nil, nil} // No processes, so return empty process slice
+				return processesMsg{nil, nil, nil, out} // No processes, so return empty process slice
 			}
 			// Error if we fail, rather than running extra code
 			return errMsg{err}
@@ -212,10 +234,31 @@ func checkProcesses(settingsInfo settings) tea.Cmd {
 
 		formatted, ends, err := formatLsof(parsed,settingsInfo)
 
-		return processesMsg{parsed, formatted, ends}
+		return processesMsg{parsed, formatted, ends, out}
 
 	}
 }
+
+func rerenderProcesses(mostRecent string, settingsInfo settings) tea.Cmd {
+	return func() tea.Msg {
+		// We have a string that represents the `lsof` output. Parse that
+		// into a slice of process structs with the parseLsof() function
+		parsed, err := parseLsof(mostRecent, settingsInfo)
+
+		if err != nil {
+			return errMsg{err}
+		}
+
+		formatted, ends, err := formatLsof(parsed,settingsInfo)
+
+
+
+		return processesMsg{parsed, formatted, ends, mostRecent}
+
+	}
+
+}
+
 
 // getLsof() runs the desired command and returns the output as a raw string or an error
 func getLsof() (string, error) {
@@ -266,6 +309,7 @@ func getCwd(pid int) (string, error) {
 // parseLsof() takes the raw string output of lsof and converts it to a slice of process structs based on the parsing
 // criteria given to it in a settings struct
 func parseLsof(raw string, options settings) ([]process, error) {
+
 	// Input will be a string. Processes are separated by \np (newline, then 'p' character)
 	separated := strings.Split(raw, "\np")
 
@@ -310,8 +354,17 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 		cmd := processInfo[1][1:]
 
-		// If we don't have a process name filter OR if the current name contains one of the valid names
-		if (!(len(options.nameFilter) > 0)) || (slices.Contains(options.nameFilter,cmd)) {
+		// Logic to check if filtering is matched
+		if
+			// If neither search nor nameFilter are enabled
+			(!(len(options.nameFilter) > 0) && (options.searchTerm == "") ) ||
+			// If we have a valid name filter but no search term
+			( (options.searchTerm == "") && slices.Contains(options.nameFilter,cmd) ) ||
+			// if we have a valid search term and no filter
+			(!(len(options.nameFilter) > 0)  && strings.Contains(cmd,options.searchTerm) ) ||
+			// If we have a filter and search term and both are matched
+			( ((len(options.nameFilter) > 0) && (options.searchTerm != "")) && strings.Contains(cmd,options.searchTerm) && slices.Contains(options.nameFilter,cmd) ) {
+
 
 			user := processInfo[2][1:]
 
@@ -588,6 +641,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetRows(msg.rows) // Convert the array of process structs to text for use in rendering
 		m.rowStarts = msg.ends // The starts of each process's set of rows
 		m.processes = msg.processes
+		m.losfOut = msg.raw
 		return m, nil
 
 	case terminateMsg:
@@ -603,39 +657,81 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, m.keys.Refresh):
-			return m, checkProcesses(m.settings)
+		if m.settings.displaySearch {
+			// Ignore other keys if in search mode
+			switch {
+			case key.Matches(msg,keys.Search):
+				m.textInput.Blur()
+				m.table.Focus()
 
-		case key.Matches(msg, keys.Terminate):
-			// If there are any processes left:
-			if len(m.processes) > 0 {
-				// Get the id of the currently highlighted process and terminate that process
-				cursor := m.table.Cursor()
+				m.settings.displaySearch = !m.settings.displaySearch
 
-				// Use the start of each process' set of rows to get the PID to kill.
-				i := 0
-				for i < (len(m.processes)){
-					if i >= cursor {
-						// We now have the index of the process in m.processes that we need the PID from stored in i
-						return m, terminateProcess(m.processes[i].id)
-					}
+				return m, rerenderProcesses(m.losfOut,m.settings)
 
-					i += 1
-				}
-				// If it breaks, do nothing
-				return m, nil
+			case key.Matches(msg,keys.Escape):
+				m.textInput.Blur()
+				m.table.Focus()
+
+				m.settings.displaySearch = false
+
+				return m, rerenderProcesses(m.losfOut,m.settings)
+
+			default:
+				m.textInput, cmd = m.textInput.Update(msg)
+				m.settings.searchTerm = m.textInput.Value()
+				return m, rerenderProcesses(m.losfOut,m.settings)
+
 			}
-			return m, nil
 
-		case key.Matches(msg, keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
 
-		case key.Matches(msg, keys.Quit):
-			return m, tea.Quit
 
+
+		} else {
+			switch {
+			case key.Matches(msg, m.keys.Refresh):
+				return m, checkProcesses(m.settings)
+
+			case key.Matches(msg, keys.Terminate):
+				// If there are any processes left:
+				if len(m.processes) > 0 {
+					// Get the id of the currently highlighted process and terminate that process
+					cursor := m.table.Cursor()
+
+					// Use the start of each process' set of rows to get the PID to kill.
+					i := 0
+					for i < (len(m.processes)){
+						if i >= cursor {
+							// We now have the index of the process in m.processes that we need the PID from stored in i
+							return m, terminateProcess(m.processes[i].id)
+						}
+
+						i += 1
+					}
+					// If it breaks, do nothing
+					return m, nil
+				}
+				return m, nil
+
+			case key.Matches(msg, keys.Help):
+				m.help.ShowAll = !m.help.ShowAll
+				return m, nil
+
+			case key.Matches(msg,keys.Search):
+				m.textInput.Focus()
+				m.table.Blur()
+				m.settings.displaySearch = true
+
+				return m, nil
+
+
+			case key.Matches(msg, keys.Quit):
+				return m, tea.Quit
+
+			}
 		}
+
 	}
+
 
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
@@ -652,6 +748,9 @@ func (m model) View() string {
 	if m.err != nil {
 		final += m.err.Error() + "\n"
 	}
+
+	final += m.textInput.View()
+
 
 	helpView := m.help.View(m.keys)
 	height := 17 - strings.Count(final, "\n") - strings.Count(helpView, "\n")
@@ -784,7 +883,18 @@ func main() {
 		columns:    columns,
 		nameFilter: cmdArgs,
 		portFilter: *flagPortFilter,
+		searchTerm: "",
+		displaySearch: false,
 	}
+
+	// Create text input area
+	ti := textinput.New()
+	ti.Placeholder = "type to search"
+	ti.Blur()
+	ti.CharLimit = 64
+	ti.Width = 16
+
+
 
 	// Create final model struct
 	m := model{
@@ -793,9 +903,12 @@ func main() {
 		err:        nil,
 		settings:   parseAndRenderSettings,
 
+		textInput: ti,
+
 		keys:       keys,
 		help:       help.New(),
 		inputStyle: baseStyle,
+
 	}
 
 	// Run it! (except if we're running on Windows)
