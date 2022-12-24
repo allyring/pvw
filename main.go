@@ -70,7 +70,7 @@ type settings struct {
 	displaySearch 	bool			// Whether to display the search bar or not
 }
 
-// ---------------------------------------------------------------------------------------------------------------------
+	// ---------------------------------------------------------------------------------------------------------------------
 
 // MODEL
 // The bubbletea model, where most of the processed information is stored, ready to be rendered.
@@ -316,6 +316,9 @@ func parseLsof(raw string, options settings) ([]process, error) {
 	// Create a new slice of processes
 	allProcesses := make([]process,0)
 
+
+
+
 	// For each process
 	for processIndex, processString := range separated {
 		// Start by splitting process info by \nf (newline, then 'f' character) to get each port open as a separate item
@@ -332,6 +335,12 @@ func parseLsof(raw string, options settings) ([]process, error) {
 		// 'p' character
 
 		processInfo := strings.Split(connectionSplit[0], "\n")
+
+		// Patch to prevent a crash when searching with no processes listed
+		if len(processInfo[0]) == 0 {
+			continue
+		}
+
 		if processIndex == 0 {
 			// remove first character from the first line in processInfo if we're on index 0
 			processInfo[0] = processInfo[0][1:]
