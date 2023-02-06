@@ -34,64 +34,64 @@ import (
 // A process. Contains a PID used to terminate the process later, the name of the executable responsible for that process,
 // an array of the ports it uses, and the username of the user that created that process
 type process struct {
-	id int
-	name string
-	directory string
+	id          int
+	name        string
+	directory   string
 	connections []connection
-	username string
+	username    string
 }
 
 // A connection. Contains a protocol type (typically tcp or udp), connection status, remote address and port,
 // and local address and port.
 type connection struct {
 	protocol string
-	status string
+	status   string
 
-	remotePort string
+	remotePort    string
 	remoteAddress string
 
-	localPort string
+	localPort    string
 	localAddress string
 }
 
 // The settings struct. Contains all the settings for parsing and rendering the table
 type settings struct {
-	readOnly   		bool           	// Allow process termination
-	showClosed 		bool           	// Allow closed ports to be displayed
-	listenOnly 		bool           	// Filter to ports that are listening
-	getCwd 	   		bool			// Enable getting the CWD of a process
+	readOnly   bool // Allow process termination
+	showClosed bool // Allow closed ports to be displayed
+	listenOnly bool // Filter to ports that are listening
+	getCwd     bool // Enable getting the CWD of a process
 
-	columns    		[]table.Column 	// The columns that have been selected for rendering
+	columns []table.Column // The columns that have been selected for rendering
 
-	portFilter 		[]string		// The port numbers to filter by - don't filter if empty
-	nameFilter 		[]string		// The port names to filter by - don't filter if empty
+	portFilter []string // The port numbers to filter by - don't filter if empty
+	nameFilter []string // The port names to filter by - don't filter if empty
 
-	searchTerm 		string			// The search term - gets added onto the nameFilter if not an empty string
-	displaySearch 	bool			// Whether to display the search bar or not
+	searchTerm    string // The search term - gets added onto the nameFilter if not an empty string
+	displaySearch bool   // Whether to display the search bar or not
 }
 
-	// ---------------------------------------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------------------------------------
 
 // MODEL
 // The bubbletea model, where most of the processed information is stored, ready to be rendered.
 
 type model struct {
-	table     	table.Model    	// The table that gets rendered
-	rowStarts	[]int			// The end of each process's list of open ports
-	processes 	[]process      	// A slice of process structs
-	err       	error          	// The most recent error
-	losfOut		string 			// The most recent lsof output as plaintext
+	table     table.Model // The table that gets rendered
+	rowStarts []int       // The end of each process's list of open ports
+	processes []process   // A slice of process structs
+	err       error       // The most recent error
+	losfOut   string      // The most recent lsof output as plaintext
 
 	// Settings are stored in the settings struct. Includes render and parsing settings
-	settings 	settings
+	settings settings
 
 	// Text input items
 	textInput textinput.Model
 
 	// Used in help menu
-	keys       	keyMap 			// The keymap used
-	help       	help.Model		// The help bubble that gets rendered
-	inputStyle 	lipgloss.Style	// The style used when rendering everything
+	keys       keyMap         // The keymap used
+	help       help.Model     // The help bubble that gets rendered
+	inputStyle lipgloss.Style // The style used when rendering everything
 
 	// TODO: Allow user to create custom styles? This might be better as a separate module/tool
 	// (if it doesn't exist yet).
@@ -106,33 +106,33 @@ type model struct {
 // Util function to get the error text from an errMsg element
 func (e errMsg) Error() string { return e.err.Error() }
 
-type processesMsg struct{ 			// A struct comprised of process structs and table rows
+type processesMsg struct { // A struct comprised of process structs and table rows
 	processes []process
-	rows []table.Row
-	ends []int
-	raw  string
+	rows      []table.Row
+	ends      []int
+	raw       string
 }
-type errMsg struct{ err error }		// An error message.
-type terminateMsg struct{} 			// The message returned when terminating a process doesn't error. This then results
-									// in another command being issued to get the latest slice of processes, which
-									// should have the terminated process removed if it was successful.
+type errMsg struct{ err error } // An error message.
+type terminateMsg struct{}      // The message returned when terminating a process doesn't error. This then results
+// in another command being issued to get the latest slice of processes, which
+// should have the terminated process removed if it was successful.
 
 // ---------------------------------------------------------------------------------------------------------------------
 
 // Keybindings. Includes all the keys that can be pressed.
 
 type keyMap struct {
-	Up      	key.Binding
-	Down    	key.Binding
+	Up   key.Binding
+	Down key.Binding
 
-	Terminate   key.Binding
-	Refresh 	key.Binding
+	Terminate key.Binding
+	Refresh   key.Binding
 
-	Search		key.Binding
-	Escape		key.Binding
+	Search key.Binding
+	Escape key.Binding
 
-	Help    	key.Binding
-	Quit    	key.Binding
+	Help key.Binding
+	Quit key.Binding
 }
 
 var keys = keyMap{
@@ -155,10 +155,10 @@ var keys = keyMap{
 	Escape: key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "close the search bar"),
-		),
+	),
 	Search: key.NewBinding(
 		key.WithKeys("/"),
-		key.WithHelp("/","toggle the search bar"),
+		key.WithHelp("/", "toggle the search bar"),
 	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),
@@ -214,7 +214,6 @@ func checkProcesses(settingsInfo settings) tea.Cmd {
 
 		out, err := getLsof()
 
-
 		if err != nil {
 			if !(err.Error() == "1") {
 
@@ -232,7 +231,11 @@ func checkProcesses(settingsInfo settings) tea.Cmd {
 			return errMsg{err}
 		}
 
-		formatted, ends, err := formatLsof(parsed,settingsInfo)
+		//fmt.Println(len(parsed))
+		//d1 := string(len(parsed))
+		//_ = os.WriteFile("/tmp/log2", []byte(d1), 0644)
+
+		formatted, ends, err := formatLsof(parsed, settingsInfo)
 
 		return processesMsg{parsed, formatted, ends, out}
 
@@ -249,16 +252,13 @@ func rerenderProcesses(mostRecent string, settingsInfo settings) tea.Cmd {
 			return errMsg{err}
 		}
 
-		formatted, ends, err := formatLsof(parsed,settingsInfo)
-
-
+		formatted, ends, err := formatLsof(parsed, settingsInfo)
 
 		return processesMsg{parsed, formatted, ends, mostRecent}
 
 	}
 
 }
-
 
 // getLsof() runs the desired command and returns the output as a raw string or an error
 func getLsof() (string, error) {
@@ -302,7 +302,7 @@ func getCwd(pid int) (string, error) {
 
 	// If there is one, we have a cwd, split the 2nd element in the array by newlines, then select the first bit of that
 	// to get the cwd as a string
-	return strings.Split(cwdSplit[1],"\n")[0], nil
+	return strings.Split(cwdSplit[1], "\n")[0], nil
 
 }
 
@@ -314,16 +314,14 @@ func parseLsof(raw string, options settings) ([]process, error) {
 	separated := strings.Split(raw, "\np")
 
 	// Create a new slice of processes
-	allProcesses := make([]process,0)
-
-
-
+	allProcesses := make([]process, 0)
 
 	// For each process
 	for processIndex, processString := range separated {
-		// Start by splitting process info by \nf (newline, then 'f' character) to get each port open as a separate item
+		// Start by splitting process info by \np (newline, then 'p' character) to get each port open as a separate item
 		// in a slice, as well as the PID, command, and user in the 1st item in the array
-		connectionSplit := strings.Split(processString, "\nf")
+
+		connectionSplit := strings.Split(processString, "\nP")
 
 		// there will always be a 1st (index 0) element, which should contain the following lines:
 		// 88917 (process ID - no initial character as we split using that character earlier EXCEPT in process
@@ -360,20 +358,18 @@ func parseLsof(raw string, options settings) ([]process, error) {
 			finalCwd = cwd
 		}
 
-
 		cmd := processInfo[1][1:]
 
 		// Logic to check if filtering is matched
 		if
-			// If neither search nor nameFilter are enabled
-			(!(len(options.nameFilter) > 0) && (options.searchTerm == "") ) ||
+		// If neither search nor nameFilter are enabled
+		(!(len(options.nameFilter) > 0) && (options.searchTerm == "")) ||
 			// If we have a valid name filter but no search term
-			( (options.searchTerm == "") && slices.Contains(options.nameFilter,cmd) ) ||
+			((options.searchTerm == "") && slices.Contains(options.nameFilter, cmd)) ||
 			// if we have a valid search term and no filter
-			(!(len(options.nameFilter) > 0)  && strings.Contains(cmd,options.searchTerm) ) ||
+			(!(len(options.nameFilter) > 0) && strings.Contains(cmd, options.searchTerm)) ||
 			// If we have a filter and search term and both are matched
-			( ((len(options.nameFilter) > 0) && (options.searchTerm != "")) && strings.Contains(cmd,options.searchTerm) && slices.Contains(options.nameFilter,cmd) ) {
-
+			(((len(options.nameFilter) > 0) && (options.searchTerm != "")) && strings.Contains(cmd, options.searchTerm) && slices.Contains(options.nameFilter, cmd)) {
 
 			user := processInfo[2][1:]
 
@@ -393,16 +389,12 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 				// Loop through each property in the connection info
 
-
-				for _, connectionProperty := range connectionInfo {
+				tmpConnection.protocol = connectionInfo[0]
+				for _, connectionProperty := range connectionInfo[1:] {
 					if len(connectionProperty) > 0 {
 
-						switch string(connectionProperty[0]){
+						switch string(connectionProperty[0]) {
 						// Switch-case for each identifier (with an additional nested switch-case for the "T**= options)
-						case "P":
-							// P: Protocol
-							tmpConnection.protocol = connectionProperty[1:]
-							break
 
 						case "n":
 							// n: Local and remote addresses and ports
@@ -427,7 +419,6 @@ func parseLsof(raw string, options settings) ([]process, error) {
 									tmpConnection.remoteAddress = splitRemoteAddressAndPort[0]
 									tmpConnection.remotePort = splitRemoteAddressAndPort[1]
 
-
 								} else {
 									// if not, then assume we're looking at a local port and address
 									// Note here, that might be an incorrect assumption, please correct me if I'm wrong :)
@@ -446,22 +437,20 @@ func parseLsof(raw string, options settings) ([]process, error) {
 								if len(options.portFilter) > 0 {
 
 									// If neither remote nor local ports are in the filter then it's invalid
-									if !(slices.Contains(options.portFilter,tmpConnection.localPort) ||
-										 slices.Contains(options.portFilter,tmpConnection.remotePort)) {
+									if !(slices.Contains(options.portFilter, tmpConnection.localPort) ||
+										slices.Contains(options.portFilter, tmpConnection.remotePort)) {
 										valid = false
 									}
 								}
-
 
 							}
 
 							break
 
 						case "T":
-							if connectionProperty[0:4]  == "TST=" {
+							if connectionProperty[0:4] == "TST=" {
 								// TST= : Connection status
 								tmpConnection.status = connectionProperty[4:]
-
 
 								// If the port isn't closed OR we have enabled closed ports
 								if connectionProperty[4:] == "CLOSED" && options.showClosed {
@@ -475,8 +464,6 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 						}
 					}
-
-
 
 				}
 
@@ -493,10 +480,10 @@ func parseLsof(raw string, options settings) ([]process, error) {
 			if len(allConnections) > 0 {
 				// Then add it to the slice
 				allProcesses = append(allProcesses, process{
-					id: pid,
-					name: cmd,
-					username: user,
-					directory: finalCwd,
+					id:          pid,
+					name:        cmd,
+					username:    user,
+					directory:   finalCwd,
 					connections: allConnections,
 				})
 			}
@@ -591,22 +578,15 @@ func formatLsof(processes []process, options settings) ([]table.Row, []int, erro
 					value = strings.ToTitle(conn.status)
 					break
 
-
 				}
 				row[columnIndex] = value
 
 			}
 			rows = append(rows, row)
-
 		}
-
-
-
-
 	}
 
 	return rows, rowStarts, nil
-
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -634,7 +614,6 @@ func terminateProcess(id int) tea.Cmd {
 func (m model) Init() tea.Cmd {
 	// When we first run, we want to get all the processes currently running
 	return checkProcesses(m.settings)
-
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -648,7 +627,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case processesMsg:
 		// We have processes, lets update the model to use the new processes
 		m.table.SetRows(msg.rows) // Convert the array of process structs to text for use in rendering
-		m.rowStarts = msg.ends // The starts of each process's set of rows
+		m.rowStarts = msg.ends    // The starts of each process's set of rows
 		m.processes = msg.processes
 		m.losfOut = msg.raw
 		return m, nil
@@ -664,36 +643,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.help.Width = msg.Width
 
-
 	case tea.KeyMsg:
 		if m.settings.displaySearch {
 			// Ignore other keys if in search mode
 			switch {
-			case key.Matches(msg,keys.Search):
+			case key.Matches(msg, keys.Search):
 				m.textInput.Blur()
 				m.table.Focus()
 
 				m.settings.displaySearch = !m.settings.displaySearch
 
-				return m, rerenderProcesses(m.losfOut,m.settings)
+				return m, rerenderProcesses(m.losfOut, m.settings)
 
-			case key.Matches(msg,keys.Escape):
+			case key.Matches(msg, keys.Escape):
 				m.textInput.Blur()
 				m.table.Focus()
 
 				m.settings.displaySearch = false
 
-				return m, rerenderProcesses(m.losfOut,m.settings)
+				return m, rerenderProcesses(m.losfOut, m.settings)
 
 			default:
 				m.textInput, cmd = m.textInput.Update(msg)
 				m.settings.searchTerm = m.textInput.Value()
-				return m, rerenderProcesses(m.losfOut,m.settings)
+				return m, rerenderProcesses(m.losfOut, m.settings)
 
 			}
-
-
-
 
 		} else {
 			switch {
@@ -708,7 +683,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Use the start of each process' set of rows to get the PID to kill.
 					i := 0
-					for i < (len(m.processes)){
+					for i < (len(m.processes)) {
 						if i >= cursor {
 							// We now have the index of the process in m.processes that we need the PID from stored in i
 							return m, terminateProcess(m.processes[i].id)
@@ -725,13 +700,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.help.ShowAll = !m.help.ShowAll
 				return m, nil
 
-			case key.Matches(msg,keys.Search):
+			case key.Matches(msg, keys.Search):
 				m.textInput.Focus()
 				m.table.Blur()
 				m.settings.displaySearch = true
 
 				return m, nil
-
 
 			case key.Matches(msg, keys.Quit):
 				return m, tea.Quit
@@ -741,13 +715,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	}
 
-
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
 }
-
-
-
 
 func (m model) View() string {
 
@@ -760,11 +730,8 @@ func (m model) View() string {
 
 	final += m.textInput.View()
 
-
 	helpView := m.help.View(m.keys)
 	height := 17 - strings.Count(final, "\n") - strings.Count(helpView, "\n")
-
-
 
 	return "\n" + final + strings.Repeat("\n", height) + helpView
 
@@ -773,25 +740,24 @@ func (m model) View() string {
 func main() {
 	// Start by handling the CLI switches/flags
 	// Columns to enable (always enable the port column)
-	flagConnStatus := pflag.BoolP("show-status","s", true, "Show the status of connections")
+	flagConnStatus := pflag.BoolP("show-status", "s", true, "Show the status of connections")
 	flagProtocol := pflag.BoolP("show-protocol", "P", false, "Show the protocol used in a connection")
-	flagShowAddresses := pflag.BoolP("show-addresses", "a",false, "Show IP addresses in a connection")
+	flagShowAddresses := pflag.BoolP("show-addresses", "a", false, "Show IP addresses in a connection")
 	flagFullConnection := pflag.BoolP("show-full-connection", "C", false, "Show full connection information")
-	flagOwner := pflag.BoolP("show-owner","o",false, "Show the owner of processes")
+	flagOwner := pflag.BoolP("show-owner", "o", false, "Show the owner of processes")
 	flagName := pflag.BoolP("show-process-name", "n", false, "Show the name of processes")
 	flagPID := pflag.BoolP("show-process-id", "i", true, "Show the process ID")
 	flagDirectory := pflag.BoolP("show-cwd", "d", false, "Show the process' current working directory")
 
-
 	// Process filtering options (used in parseLsof())
-	flagListeningOnly := pflag.BoolP("listen-only","l",false,"Only show listening ports")
+	flagListeningOnly := pflag.BoolP("listen-only", "l", false, "Only show listening ports")
 	flagShowClosed := pflag.BoolP("show-closed", "c", false, "Show closed ports")
 
 	// Read-only mode (prevents process termination, passed to model)
-	flagReadOnly := pflag.BoolP("read-only",  "r", false, "Read-only mode - prevents processes from being terminated in the TUI")
+	flagReadOnly := pflag.BoolP("read-only", "r", false, "Read-only mode - prevents processes from being terminated in the TUI")
 
 	// A flag to set a comma separated list of ports to filter by
-	flagPortFilter := pflag.StringSlice("ports",nil,"Port filter - only shows the selected ports. Accepts a list of port numbers, separated by commas.")
+	flagPortFilter := pflag.StringSlice("ports", nil, "Port filter - only shows the selected ports. Accepts a list of port numbers, separated by commas.")
 
 	// Help command should be built-in, and populates based in usage field in pflag.TypeP()
 	pflag.Parse()
@@ -804,24 +770,23 @@ func main() {
 
 	columnSettings := map[table.Column]bool{
 		// Process information
-		table.Column{Title: "PID", Width: 5}:      			*flagPID,
-		table.Column{Title: "Name", Width: 10}:    			*flagName,
-		table.Column{Title: "Directory", Width: 16}:    	*flagDirectory,
-		table.Column{Title: "Owner", Width: 8}:    			*flagOwner,
+		table.Column{Title: "PID", Width: 5}:        *flagPID,
+		table.Column{Title: "Name", Width: 10}:      *flagName,
+		table.Column{Title: "Directory", Width: 16}: *flagDirectory,
+		table.Column{Title: "Owner", Width: 8}:      *flagOwner,
 
 		// Connection information
-		table.Column{Title: "Protocol", Width: 3}: 			*flagProtocol,
+		table.Column{Title: "Protocol", Width: 3}: *flagProtocol,
 		// Used when not viewing full connection
-		table.Column{Title: "Address", Width: 15}: 			*flagShowAddresses && !*flagFullConnection,
-		table.Column{Title: "Port", Width: 5}: 				!*flagFullConnection,
+		table.Column{Title: "Address", Width: 15}: *flagShowAddresses && !*flagFullConnection,
+		table.Column{Title: "Port", Width: 5}:     !*flagFullConnection,
 		// Used when viewing full connection
-		table.Column{Title: "Local Address", Width: 15}: 	*flagFullConnection,
-		table.Column{Title: "Local Port", Width: 5}: 		*flagFullConnection,
-		table.Column{Title: "Remote Address", Width: 15}: 	*flagFullConnection,
-		table.Column{Title: "Remote Port", Width: 5}: 		*flagFullConnection,
+		table.Column{Title: "Local Address", Width: 15}:  *flagFullConnection,
+		table.Column{Title: "Local Port", Width: 5}:      *flagFullConnection,
+		table.Column{Title: "Remote Address", Width: 15}: *flagFullConnection,
+		table.Column{Title: "Remote Port", Width: 5}:     *flagFullConnection,
 
-		table.Column{Title: "Status", Width: 11}: 			*flagConnStatus,
-
+		table.Column{Title: "Status", Width: 11}: *flagConnStatus,
 	}
 
 	columnIndexes := []table.Column{
@@ -842,9 +807,7 @@ func main() {
 		{Title: "Remote Port", Width: 5},
 
 		{Title: "Status", Width: 11},
-
 	}
-
 
 	// Configure columns to use by looping through columnSettings
 	var columns []table.Column
@@ -882,17 +845,16 @@ func main() {
 		Bold(false)
 	t.SetStyles(s)
 
-
 	// Create settings struct for parsing settings and render columns
 	parseAndRenderSettings := settings{
-		readOnly:   *flagReadOnly,
-		showClosed: *flagShowClosed,
-		listenOnly: *flagListeningOnly,
-		getCwd: 	*flagDirectory,
-		columns:    columns,
-		nameFilter: cmdArgs,
-		portFilter: *flagPortFilter,
-		searchTerm: "",
+		readOnly:      *flagReadOnly,
+		showClosed:    *flagShowClosed,
+		listenOnly:    *flagListeningOnly,
+		getCwd:        *flagDirectory,
+		columns:       columns,
+		nameFilter:    cmdArgs,
+		portFilter:    *flagPortFilter,
+		searchTerm:    "",
 		displaySearch: false,
 	}
 
@@ -903,21 +865,18 @@ func main() {
 	ti.CharLimit = 64
 	ti.Width = 16
 
-
-
 	// Create final model struct
 	m := model{
-		table:      t,
-		processes:  []process{},
-		err:        nil,
-		settings:   parseAndRenderSettings,
+		table:     t,
+		processes: []process{},
+		err:       nil,
+		settings:  parseAndRenderSettings,
 
 		textInput: ti,
 
 		keys:       keys,
 		help:       help.New(),
 		inputStyle: baseStyle,
-
 	}
 
 	// Run it! (except if we're running on Windows)
@@ -933,7 +892,6 @@ func main() {
 			os.Exit(1)
 
 		}
-
 
 		if _, err := tea.NewProgram(m).Run(); err != nil {
 			fmt.Println("Error running pvw: ", err)
