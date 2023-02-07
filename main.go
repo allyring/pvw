@@ -193,8 +193,7 @@ func (k keyMap) FullHelp() [][]key.Binding {
 
 // ---------------------------------------------------------------------------------------------------------------------
 
-// Lipgloss' base style. Just using the default for now.
-
+// Lipgloss' base style.
 var baseStyle = lipgloss.NewStyle().
 	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(lipgloss.Color("240"))
@@ -836,15 +835,18 @@ func main() {
 
 	// Change the default styles of the table
 	s := table.DefaultStyles()
+
 	s.Header = s.Header.
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("240")).
 		BorderBottom(true).
-		Bold(false)
+		Bold(true)
+
 	s.Selected = s.Selected.
-		Foreground(lipgloss.Color("229")).
-		Background(lipgloss.Color("57")).
+		Foreground(lipgloss.Color("7")).
+		Background(lipgloss.Color("#33a989")).
 		Bold(false)
+
 	t.SetStyles(s)
 
 	// Create settings struct for parsing settings and render columns
