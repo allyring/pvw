@@ -80,7 +80,7 @@ type model struct {
 	rowStarts []int       // The end of each process's list of open ports
 	processes []process   // A slice of process structs
 	err       error       // The most recent error
-	losfOut   string      // The most recent lsof output as plaintext
+	lsofOut   string      // The most recent lsof output as plaintext
 
 	// Settings are stored in the settings struct. Includes render and parsing settings
 	settings settings
@@ -389,7 +389,9 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 				// Loop through each property in the connection info
 
+				// First property is always the protocol
 				tmpConnection.protocol = connectionInfo[0]
+
 				for _, connectionProperty := range connectionInfo[1:] {
 					if len(connectionProperty) > 0 {
 
@@ -629,7 +631,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.table.SetRows(msg.rows) // Convert the array of process structs to text for use in rendering
 		m.rowStarts = msg.ends    // The starts of each process's set of rows
 		m.processes = msg.processes
-		m.losfOut = msg.raw
+		m.lsofOut = msg.raw
 		return m, nil
 
 	case terminateMsg:
@@ -653,7 +655,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.settings.displaySearch = !m.settings.displaySearch
 
-				return m, rerenderProcesses(m.losfOut, m.settings)
+				return m, rerenderProcesses(m.lsofOut, m.settings)
 
 			case key.Matches(msg, keys.Escape):
 				m.textInput.Blur()
@@ -661,12 +663,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.settings.displaySearch = false
 
-				return m, rerenderProcesses(m.losfOut, m.settings)
+				return m, rerenderProcesses(m.lsofOut, m.settings)
 
 			default:
 				m.textInput, cmd = m.textInput.Update(msg)
 				m.settings.searchTerm = m.textInput.Value()
-				return m, rerenderProcesses(m.losfOut, m.settings)
+				return m, rerenderProcesses(m.lsofOut, m.settings)
 
 			}
 
