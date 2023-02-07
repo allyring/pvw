@@ -25,7 +25,6 @@ Thanks to @dlvhdr for the idea in the [charmbracelet/inspo](https://github.com/c
 everyone in the [Charm Discord server](https://charm.sh/chat) for helping answer my questions.
 
 ### Future features:
-- ANSI default theme
 - Better IPv6 support
 - Save data to JSON
 - Resizable table in config
