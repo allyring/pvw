@@ -777,8 +777,7 @@ func main() {
 		table.Column{Title: "Owner", Width: 8}:      *flagOwner,
 
 		// Connection information
-		table.Column{Title: "Protocol", Width: 3}: *flagProtocol,
-		// Used when not viewing full connection
+		table.Column{Title: "Protocol", Width: 3}: *flagProtocol, // Used when not viewing full connection
 		table.Column{Title: "Address", Width: 15}: *flagShowAddresses && !*flagFullConnection,
 		table.Column{Title: "Port", Width: 5}:     !*flagFullConnection,
 		// Used when viewing full connection
