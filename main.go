@@ -283,25 +283,20 @@ func getCwd(pid int) (string, error) {
 	pidString := strconv.Itoa(pid)
 
 	// Gets the process' open files, including current working directory.
-	// Command is `lsof -p PID -F n`
-	cmd := exec.Command("lsof", "-p", pidString, "-F", "n")
+	// Command is `ps -oexe= PID`
+	cmd := exec.Command("ps", "-oexe=", pidString)
 	out, err := cmd.Output()
 
 	if err != nil {
 		return "", err
 	}
 
-	// The field can be identified with the string 'fcwd\nn', then the next section until a newline
-	// So split by that string
-	cwdSplit := strings.Split(string(out), "fcwd\nn")
-	if len(cwdSplit) < 1 {
+	if len(string(out)) < 1 {
 		// No cwd, return empty and nil
 		return "", nil
 	}
 
-	// If there is one, we have a cwd, split the 2nd element in the array by newlines, then select the first bit of that
-	// to get the cwd as a string
-	return strings.Split(cwdSplit[1], "\n")[0], nil
+	return string(out), nil
 
 }
 
@@ -677,25 +672,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, checkProcesses(m.settings)
 
 			case key.Matches(msg, keys.Terminate):
-				// If there are any processes left:
-				if len(m.processes) > 0 {
-					// Get the id of the currently highlighted process and terminate that process
-					cursor := m.table.Cursor()
+				// If the read-only option is not enabled
+				if m.settings.readOnly != true {
+					// If there are any processes left:
+					if len(m.processes) > 0 {
+						// Get the id of the currently highlighted process and terminate that process
+						cursor := m.table.Cursor()
 
-					// Use the start of each process' set of rows to get the PID to kill.
-					i := 0
-					for i < (len(m.processes)) {
-						if i >= cursor {
-							// We now have the index of the process in m.processes that we need the PID from stored in i
-							return m, terminateProcess(m.processes[i].id)
+						// Use the start of each process' set of rows to get the PID to kill.
+						i := 0
+						for i < (len(m.processes)) {
+							if i >= cursor {
+								// We now have the index of the process in m.processes that we need the PID from stored in variable 'i'
+								return m, terminateProcess(m.processes[i].id)
+							}
+
+							i += 1
 						}
-
-						i += 1
+						// If it breaks, do nothing
+						return m, nil
 					}
-					// If it breaks, do nothing
+					return m, nil
+				} else {
 					return m, nil
 				}
-				return m, nil
 
 			case key.Matches(msg, keys.Help):
 				m.help.ShowAll = !m.help.ShowAll
