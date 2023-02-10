@@ -12,15 +12,9 @@ sudo eget allyring/pvw --to /usr/local/bin
 However, you can manually install it by downloading the latest binary from the releases tab
 and moving it to any location on your $PATH.
 
-<<<<<<< HEAD
+
 pvw also relies on `lsof` version 4.94 or later being installed on your system. Many systems ship with it, but if not, then it can be
 installed through your standard package manager.
-=======
-**pvw requires `lsof` version 4.93 or earlier to be installed on your system. A patch to allow newer versions of `lsof` to be used is currently in development.**
-
-~~pvw also relies on `lsof` being installed on your system. Many systems ship with it, but if not, then it can be
-installed through your standard package manager.~~
->>>>>>> f727c72c4c03c2d1cfd152b7558c7c46f74b7d8f
 
 ## Usage
 Run with `pvw` followed by any flags/switches. Run `pvw -h` or `pvw --help` for help.
