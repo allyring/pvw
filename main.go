@@ -749,6 +749,7 @@ func main() {
 	flagName := pflag.BoolP("show-process-name", "n", false, "Show the name of processes")
 	flagPID := pflag.BoolP("show-process-id", "i", true, "Show the process ID")
 	flagDirectory := pflag.BoolP("show-cwd", "d", false, "Show the process' current working directory")
+	flagAll := pflag.BoolP("show-all", "A", false, "Show all information (equivalent to -PCond flags)")
 
 	// Process filtering options (used in parseLsof())
 	flagListeningOnly := pflag.BoolP("listen-only", "l", false, "Only show listening ports")
@@ -762,6 +763,16 @@ func main() {
 
 	// Help command should be built-in, and populates based in usage field in pflag.TypeP()
 	pflag.Parse()
+
+	if *flagAll {
+		*flagPID = true
+		*flagName = true
+		*flagDirectory = true
+		*flagOwner = true
+		*flagProtocol = true
+		*flagFullConnection = true
+		*flagConnStatus = true
+	}
 
 	// All other args act as a process name filter
 	cmdArgs := pflag.Args()
