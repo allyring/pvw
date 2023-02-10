@@ -29,4 +29,5 @@ everyone in the [Charm Discord server](https://charm.sh/chat) for helping answer
 - Save data to JSON
 - Resizable table in config
 - Custom default configs?
+- Flag to enable friendly port names
 

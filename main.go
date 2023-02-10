@@ -200,6 +200,19 @@ var baseStyle = lipgloss.NewStyle().
 
 // ---------------------------------------------------------------------------------------------------------------------
 
+// Variable containing hashmap for port numbers to service names:
+var serviceNames = map[int]string{
+	22: "ssh",
+	80: "http",
+	443: "https",
+	21: "ftp",
+	445: "smb",
+	3389: "rdp",
+	25562: "minecraft-server",
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+
 // LSOF Processing
 // All the functions and Cmds relating to getting the processes with ports open on macOS and Linux
 // TODO: Windows implementation?
