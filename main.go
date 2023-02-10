@@ -42,10 +42,13 @@ type process struct {
 }
 
 // A connection. Contains a protocol type (typically tcp or udp), connection status, remote address and port,
-// and local address and port.
+// local address and port, and friendly name for the remote port / local port if listening.
 type connection struct {
 	protocol string
 	status   string
+
+	localName string
+	remoteName string
 
 	remotePort    string
 	remoteAddress string
@@ -62,6 +65,7 @@ type settings struct {
 	getCwd     bool // Enable getting the CWD of a process
 
 	columns []table.Column // The columns that have been selected for rendering
+	serviceNames bool // Whether to resolve service names from ports
 
 	portFilter []string // The port numbers to filter by - don't filter if empty
 	nameFilter []string // The port names to filter by - don't filter if empty
@@ -92,9 +96,6 @@ type model struct {
 	keys       keyMap         // The keymap used
 	help       help.Model     // The help bubble that gets rendered
 	inputStyle lipgloss.Style // The style used when rendering everything
-
-	// TODO: Allow user to create custom styles? This might be better as a separate module/tool
-	// (if it doesn't exist yet).
 
 }
 
@@ -201,21 +202,81 @@ var baseStyle = lipgloss.NewStyle().
 // ---------------------------------------------------------------------------------------------------------------------
 
 // Variable containing hashmap for port numbers to service names:
-var serviceNames = map[int]string{
-	22: "ssh",
-	80: "http",
-	443: "https",
-	21: "ftp",
-	445: "smb",
-	3389: "rdp",
-	25562: "minecraft-server",
+var serviceNames = map[string]string{
+	"20": "ftp-data",
+	"21": "ftp",
+	"22": "ssh",
+	"23": "telnet",
+	"25": "smtp",
+	"69": "tftp",
+	"80": "http",
+	"88": "kerberos-auth",
+	"106": "macos-password",
+	"109": "pop2",
+	"110": "pop3",
+	"115": "sftp",
+	"118": "sql",
+	"123": "ntp",
+	"137": "netBIOS-ns",
+	"138": "netBIOS-data",
+	"139": "netBIOS-ssn",
+	"143": "imap",
+	"194": "irc",
+	"220": "imap3",
+	"389": "ldap",
+	"443": "https",
+	"445": "microsoft-ds",
+	"464": "kerberos-passwd",
+	"543": "kerberos-login",
+	"544": "kerberos-remote",
+	"587": "smtp-msa",
+	"593": "ms-dcom",
+	"636": "ldap-ssl",
+	"691": "ms-exchange",
+	"749": "kerberos-admin",
+	"902": "vmware-server",
+	"989": "ftp-data-ssl",
+	"990": "ftp-ssl",
+	"992": "telnet-ssl",
+	"995": "pop3-ssl",
+	"1025": "ms-rpc",
+	"1194": "openvpn",
+	"1337": "waste",
+	"1433": "mssql-server",
+	"1434": "mssql-monitor",
+	"1589": "cisco-vqp",
+	"1725": "steam",
+	"1883": "mqtt",
+	"2049": "nfs",
+	"2082": "cpanel",
+	"2083": "cpanel-ssl, radsec",
+	"2483": "oracle-db",
+	"2484": "oracle-db",
+	"2967": "symantec-av",
+	"3074": "xbox-live",
+	"3306": "mysql",
+	"3389": "rdp",
+	"5432": "postgres-sql",
+	"6665": "irc",
+	"6669": "irc",
+	"6881": "bittorrent",
+	"6999": "bittorrent",
+	"6970": "quicktime",
+	"8086": "kaspersky-av",
+	"8087": "kaspersky-av",
+	"8222": "vmware-server",
+	"9100": "pdl",
+	"10000": "backup-exec",
+	"12345": "netbus",
+	"27374": "sub7",
+	"18006": "back-orifice",
+	"25565": "minecraft-server",
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
 
 // LSOF Processing
 // All the functions and Cmds relating to getting the processes with ports open on macOS and Linux
-// TODO: Windows implementation?
 
 // checkProcesses() is the primary function that returns a bubbletea message. It handles all the other functions,
 // processes their outputs, then passes those outputs to other functions.
@@ -428,6 +489,12 @@ func parseLsof(raw string, options settings) ([]process, error) {
 									tmpConnection.remoteAddress = splitRemoteAddressAndPort[0]
 									tmpConnection.remotePort = splitRemoteAddressAndPort[1]
 
+									// outbound connection, so use remote port for friendly name
+									if _, exists := serviceNames[tmpConnection.remotePort]; exists {
+										tmpConnection.remoteName = serviceNames[tmpConnection.remotePort]
+									}
+
+
 								} else {
 									// if not, then assume we're looking at a local port and address
 									// Note here, that might be an incorrect assumption, please correct me if I'm wrong :)
@@ -438,10 +505,14 @@ func parseLsof(raw string, options settings) ([]process, error) {
 									// As localPort is a string, we can handle ports like '*' without conversions.
 									tmpConnection.localPort = splitLocalAddressAndPort[1]
 
+									// friendly port name is local port as process is listening on this port
+									if _, exists := serviceNames[tmpConnection.localPort]; exists {
+										tmpConnection.localName = serviceNames[tmpConnection.localPort]
+									}
+
 								}
 
 								// Check validity with ports
-
 								// If we have ports to filter by
 								if len(options.portFilter) > 0 {
 
@@ -563,10 +634,19 @@ func formatLsof(processes []process, options settings) ([]table.Row, []int, erro
 					break
 
 				case "Port":
-					if conn.remotePort != "" {
-						value = conn.remotePort
+					if conn.remoteAddress != "" {
+						if options.serviceNames && conn.remoteName != "" {
+							value = conn.remoteName
+						} else {
+							value = conn.remotePort
+						}
 					} else {
-						value = conn.localPort
+						// If not, then use local address
+						if options.serviceNames && conn.localName != "" {
+							value = conn.localName
+						} else {
+							value = conn.localPort
+						}
 					}
 					break
 
@@ -574,13 +654,21 @@ func formatLsof(processes []process, options settings) ([]table.Row, []int, erro
 					value = conn.localAddress
 					break
 				case "Local Port":
-					value = conn.localPort
+					if options.serviceNames && conn.localName != "" {
+						value = conn.localName
+					} else {
+						value = conn.localPort
+					}
 					break
 				case "Remote Address":
 					value = conn.remoteAddress
 					break
 				case "Remote Port":
-					value = conn.remotePort
+					if options.serviceNames && conn.remoteName != "" {
+						value = conn.remoteName
+					} else {
+						value = conn.remotePort
+					}
 					break
 
 				case "Status":
@@ -594,7 +682,6 @@ func formatLsof(processes []process, options settings) ([]table.Row, []int, erro
 			rows = append(rows, row)
 		}
 	}
-
 	return rows, rowStarts, nil
 }
 
@@ -767,6 +854,7 @@ func main() {
 	// Process filtering options (used in parseLsof())
 	flagListeningOnly := pflag.BoolP("listen-only", "l", false, "Only show listening ports")
 	flagShowClosed := pflag.BoolP("show-closed", "c", false, "Show closed ports")
+	flagShowProtocolNames := pflag.BoolP("show-proto-names", "N", false, "Show protocol names instead of ports where applicable")
 
 	// Read-only mode (prevents process termination, passed to model)
 	flagReadOnly := pflag.BoolP("read-only", "r", false, "Read-only mode - prevents processes from being terminated in the TUI")
@@ -883,6 +971,7 @@ func main() {
 		portFilter:    *flagPortFilter,
 		searchTerm:    "",
 		displaySearch: false,
+		serviceNames: *flagShowProtocolNames,
 	}
 
 	// Create text input area
