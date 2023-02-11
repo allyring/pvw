@@ -47,7 +47,7 @@ type connection struct {
 	protocol string
 	status   string
 
-	localName string
+	localName  string
 	remoteName string
 
 	remotePort    string
@@ -55,6 +55,8 @@ type connection struct {
 
 	localPort    string
 	localAddress string
+
+	ipv6 bool
 }
 
 // The settings struct. Contains all the settings for parsing and rendering the table
@@ -64,8 +66,11 @@ type settings struct {
 	listenOnly bool // Filter to ports that are listening
 	getCwd     bool // Enable getting the CWD of a process
 
-	columns []table.Column // The columns that have been selected for rendering
-	serviceNames bool // Whether to resolve service names from ports
+	showIPv6 bool // Enable IPv6
+	showIPv4 bool // Enable IPv4
+
+	columns      []table.Column // The columns that have been selected for rendering
+	serviceNames bool           // Whether to resolve service names from ports
 
 	portFilter []string // The port numbers to filter by - don't filter if empty
 	nameFilter []string // The port names to filter by - don't filter if empty
@@ -203,69 +208,69 @@ var baseStyle = lipgloss.NewStyle().
 
 // Variable containing hashmap for port numbers to service names:
 var serviceNames = map[string]string{
-	"20": "ftp-data",
-	"21": "ftp",
-	"22": "ssh",
-	"23": "telnet",
-	"25": "smtp",
-	"69": "tftp",
-	"80": "http",
-	"88": "kerberos-auth",
-	"106": "macos-password",
-	"109": "pop2",
-	"110": "pop3",
-	"115": "sftp",
-	"118": "sql",
-	"123": "ntp",
-	"137": "netBIOS-ns",
-	"138": "netBIOS-data",
-	"139": "netBIOS-ssn",
-	"143": "imap",
-	"194": "irc",
-	"220": "imap3",
-	"389": "ldap",
-	"443": "https",
-	"445": "microsoft-ds",
-	"464": "kerberos-passwd",
-	"543": "kerberos-login",
-	"544": "kerberos-remote",
-	"587": "smtp-msa",
-	"593": "ms-dcom",
-	"636": "ldap-ssl",
-	"691": "ms-exchange",
-	"749": "kerberos-admin",
-	"902": "vmware-server",
-	"989": "ftp-data-ssl",
-	"990": "ftp-ssl",
-	"992": "telnet-ssl",
-	"995": "pop3-ssl",
-	"1025": "ms-rpc",
-	"1194": "openvpn",
-	"1337": "waste",
-	"1433": "mssql-server",
-	"1434": "mssql-monitor",
-	"1589": "cisco-vqp",
-	"1725": "steam",
-	"1883": "mqtt",
-	"2049": "nfs",
-	"2082": "cpanel",
-	"2083": "cpanel-ssl, radsec",
-	"2483": "oracle-db",
-	"2484": "oracle-db",
-	"2967": "symantec-av",
-	"3074": "xbox-live",
-	"3306": "mysql",
-	"3389": "rdp",
-	"5432": "postgres-sql",
-	"6665": "irc",
-	"6669": "irc",
-	"6881": "bittorrent",
-	"6999": "bittorrent",
-	"6970": "quicktime",
-	"8086": "kaspersky-av",
-	"8087": "kaspersky-av",
-	"8222": "vmware-server",
-	"9100": "pdl",
+	"20":    "ftp-data",
+	"21":    "ftp",
+	"22":    "ssh",
+	"23":    "telnet",
+	"25":    "smtp",
+	"69":    "tftp",
+	"80":    "http",
+	"88":    "kerberos-auth",
+	"106":   "macos-password",
+	"109":   "pop2",
+	"110":   "pop3",
+	"115":   "sftp",
+	"118":   "sql",
+	"123":   "ntp",
+	"137":   "netBIOS-ns",
+	"138":   "netBIOS-data",
+	"139":   "netBIOS-ssn",
+	"143":   "imap",
+	"194":   "irc",
+	"220":   "imap3",
+	"389":   "ldap",
+	"443":   "https",
+	"445":   "microsoft-ds",
+	"464":   "kerberos-passwd",
+	"543":   "kerberos-login",
+	"544":   "kerberos-remote",
+	"587":   "smtp-msa",
+	"593":   "ms-dcom",
+	"636":   "ldap-ssl",
+	"691":   "ms-exchange",
+	"749":   "kerberos-admin",
+	"902":   "vmware-server",
+	"989":   "ftp-data-ssl",
+	"990":   "ftp-ssl",
+	"992":   "telnet-ssl",
+	"995":   "pop3-ssl",
+	"1025":  "ms-rpc",
+	"1194":  "openvpn",
+	"1337":  "waste",
+	"1433":  "mssql-server",
+	"1434":  "mssql-monitor",
+	"1589":  "cisco-vqp",
+	"1725":  "steam",
+	"1883":  "mqtt",
+	"2049":  "nfs",
+	"2082":  "cpanel",
+	"2083":  "cpanel-ssl, radsec",
+	"2483":  "oracle-db",
+	"2484":  "oracle-db",
+	"2967":  "symantec-av",
+	"3074":  "xbox-live",
+	"3306":  "mysql",
+	"3389":  "rdp",
+	"5432":  "postgres-sql",
+	"6665":  "irc",
+	"6669":  "irc",
+	"6881":  "bittorrent",
+	"6999":  "bittorrent",
+	"6970":  "quicktime",
+	"8086":  "kaspersky-av",
+	"8087":  "kaspersky-av",
+	"8222":  "vmware-server",
+	"9100":  "pdl",
 	"10000": "backup-exec",
 	"12345": "netbus",
 	"27374": "sub7",
@@ -336,12 +341,10 @@ func rerenderProcesses(mostRecent string, settingsInfo settings) tea.Cmd {
 // getLsof() runs the desired command and returns the output as a raw string or an error
 func getLsof() (string, error) {
 	// Set the command to use and get the output of that command (as well as any error codes we may encounter)
-	// Command is `lsof -i -Pn -F cPnpLT`
-	cmd := exec.Command("lsof", "-i", "-Pn", "-F", "cPnpLT")
+	// Command is `lsof -i -Pn -F cPnpLTt`
+	cmd := exec.Command("lsof", "-i", "-Pn", "-F", "cPnpLTt")
 	out, err := cmd.Output()
 
-	// If the error code is 1, then there are no processes with open ports.
-	// Assume anything else is an actual error
 	if err != nil {
 		// There's an error, return an empty string & the error. We'll parse error code 1 (no processes found) later on.
 		return "", err
@@ -349,7 +352,6 @@ func getLsof() (string, error) {
 
 	// We have valid data, so return it! The out variable is a byte array, so convert it to a string first.
 	return string(out), err
-
 }
 
 // getCwd() gets the working directory of a process from a PID
@@ -389,7 +391,7 @@ func parseLsof(raw string, options settings) ([]process, error) {
 		// Start by splitting process info by \np (newline, then 'p' character) to get each port open as a separate item
 		// in a slice, as well as the PID, command, and user in the 1st item in the array
 
-		connectionSplit := strings.Split(processString, "\nP")
+		connectionSplit := strings.Split(processString, "\nt")
 
 		// there will always be a 1st (index 0) element, which should contain the following lines:
 		// 88917 (process ID - no initial character as we split using that character earlier EXCEPT in process
@@ -457,8 +459,17 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 				// Loop through each property in the connection info
 
-				// First property is always the protocol
-				tmpConnection.protocol = connectionInfo[0]
+				// First property is always the IP Version
+				tmpConnection.ipv6 = connectionInfo[0] == "IPv6"
+				if !options.showIPv6 && tmpConnection.ipv6 {
+					valid = false
+					continue
+				}
+
+				if !options.showIPv4 && !tmpConnection.ipv6 {
+					valid = false
+					continue
+				}
 
 				for _, connectionProperty := range connectionInfo[1:] {
 					if len(connectionProperty) > 0 {
@@ -467,8 +478,7 @@ func parseLsof(raw string, options settings) ([]process, error) {
 						// Switch-case for each identifier (with an additional nested switch-case for the "T**= options)
 
 						case "n":
-							// n: Local and remote addresses and ports
-
+							// n: Local and remote addresses and ports.
 							if connectionProperty[1:] == "*:*" {
 								// *:* usually indicates some unimportant connection, so we just make that connection invalid
 								// This might be wrong! If you want to submit an issue about this, then feel free!
@@ -478,10 +488,34 @@ func parseLsof(raw string, options settings) ([]process, error) {
 
 								splitLocalAndRemote := strings.Split(connectionProperty[1:], "->")
 								// If there is a ->, then there is a clear local and remote connection
+
 								if len(splitLocalAndRemote) > 1 {
-									// Should only be 2 elements in that array: local and remote addr:port pairs
-									splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
-									splitRemoteAddressAndPort := strings.Split(splitLocalAndRemote[1], ":")
+									var splitLocalAddressAndPort []string
+									var splitRemoteAddressAndPort []string
+
+									if tmpConnection.ipv6 {
+										// IPv6 parsing algorithm
+										// Should only be 2 elements in that array: local and remote addr:port pairs
+										splitLocalAddressAndPort = strings.Split(splitLocalAndRemote[0][1:], "]:")
+										splitRemoteAddressAndPort = strings.Split(splitLocalAndRemote[1][1:], "]:")
+										if len(splitLocalAddressAndPort) < 2 {
+											splitLocalAddressAndPort = strings.Split(splitLocalAndRemote[0], ":")
+										} else {
+											splitLocalAddressAndPort[0] = "[" + splitLocalAddressAndPort[0] + "]"
+										}
+
+										if len(splitRemoteAddressAndPort) < 2 {
+											splitRemoteAddressAndPort = strings.Split(splitLocalAndRemote[1], ":")
+										} else {
+											splitRemoteAddressAndPort[0] = "[" + splitRemoteAddressAndPort[0] + "]"
+										}
+
+									} else {
+										// IPv4 parsing algorithm
+										// Should only be 2 elements in that array: local and remote addr:port pairs
+										splitLocalAddressAndPort = strings.Split(splitLocalAndRemote[0], ":")
+										splitRemoteAddressAndPort = strings.Split(splitLocalAndRemote[1], ":")
+									}
 
 									// Set the struct's data to the parsed output
 									tmpConnection.localAddress = splitLocalAddressAndPort[0]
@@ -494,12 +528,23 @@ func parseLsof(raw string, options settings) ([]process, error) {
 										tmpConnection.remoteName = serviceNames[tmpConnection.remotePort]
 									}
 
-
 								} else {
 									// if not, then assume we're looking at a local port and address
 									// Note here, that might be an incorrect assumption, please correct me if I'm wrong :)
+									var splitLocalAddressAndPort []string
+									if tmpConnection.ipv6 {
+										// IPv6 algorithm
+										splitLocalAddressAndPort = strings.Split(splitLocalAndRemote[0][1:], "]:")
+										if len(splitLocalAddressAndPort) < 2 {
+											splitLocalAddressAndPort = strings.Split(splitLocalAndRemote[0], ":")
+										} else {
+											splitLocalAddressAndPort[0] = "[" + splitLocalAddressAndPort[0] + "]"
+										}
 
-									splitLocalAddressAndPort := strings.Split(splitLocalAndRemote[0], ":")
+									} else {
+										// IPv4 algorithm
+										splitLocalAddressAndPort = strings.Split(splitLocalAndRemote[0], ":")
+									}
 									tmpConnection.localAddress = splitLocalAddressAndPort[0]
 
 									// As localPort is a string, we can handle ports like '*' without conversions.
@@ -511,18 +556,17 @@ func parseLsof(raw string, options settings) ([]process, error) {
 									}
 
 								}
+							}
 
-								// Check validity with ports
-								// If we have ports to filter by
-								if len(options.portFilter) > 0 {
+							// Check validity with ports
+							// If we have ports to filter by
+							if len(options.portFilter) > 0 {
 
-									// If neither remote nor local ports are in the filter then it's invalid
-									if !(slices.Contains(options.portFilter, tmpConnection.localPort) ||
-										slices.Contains(options.portFilter, tmpConnection.remotePort)) {
-										valid = false
-									}
+								// If neither remote nor local ports are in the filter then it's invalid
+								if !(slices.Contains(options.portFilter, tmpConnection.localPort) ||
+									slices.Contains(options.portFilter, tmpConnection.remotePort)) {
+									valid = false
 								}
-
 							}
 
 							break
@@ -530,7 +574,7 @@ func parseLsof(raw string, options settings) ([]process, error) {
 						case "T":
 							if connectionProperty[0:4] == "TST=" {
 								// TST= : Connection status
-								tmpConnection.status = connectionProperty[4:]
+								tmpConnection.status = strings.ToTitle(connectionProperty[4:])
 
 								// If the port isn't closed OR we have enabled closed ports
 								if connectionProperty[4:] == "CLOSED" && options.showClosed {
@@ -542,6 +586,10 @@ func parseLsof(raw string, options settings) ([]process, error) {
 							}
 							break
 
+						case "P":
+							// Get protocol
+							tmpConnection.protocol = connectionProperty[1:]
+							break
 						}
 					}
 
@@ -851,10 +899,13 @@ func main() {
 	flagDirectory := pflag.BoolP("show-cwd", "d", false, "Show the process' current working directory")
 	flagAll := pflag.BoolP("show-all", "A", false, "Show all information (equivalent to -PCond flags)")
 
-	// Process filtering options (used in parseLsof())
+	// Process and connection filtering options (used in parseLsof())
 	flagListeningOnly := pflag.BoolP("listen-only", "l", false, "Only show listening ports")
 	flagShowClosed := pflag.BoolP("show-closed", "c", false, "Show closed ports")
 	flagShowProtocolNames := pflag.BoolP("show-proto-names", "N", false, "Show protocol names instead of ports where applicable")
+
+	flagShowIPv6 := pflag.BoolP("ipv6", "6", true, "Show IPv6 connections")
+	flagShowIPv4 := pflag.BoolP("ipv4", "4", true, "Show IPv4 connections")
 
 	// Read-only mode (prevents process termination, passed to model)
 	flagReadOnly := pflag.BoolP("read-only", "r", false, "Read-only mode - prevents processes from being terminated in the TUI")
@@ -890,12 +941,12 @@ func main() {
 
 		// Connection information
 		table.Column{Title: "Protocol", Width: 3}: *flagProtocol, // Used when not viewing full connection
-		table.Column{Title: "Address", Width: 15}: *flagShowAddresses && !*flagFullConnection,
+		table.Column{Title: "Address", Width: 42}: *flagShowAddresses && !*flagFullConnection,
 		table.Column{Title: "Port", Width: 5}:     !*flagFullConnection,
 		// Used when viewing full connection
-		table.Column{Title: "Local Address", Width: 15}:  *flagFullConnection,
+		table.Column{Title: "Local Address", Width: 42}:  *flagFullConnection,
 		table.Column{Title: "Local Port", Width: 5}:      *flagFullConnection,
-		table.Column{Title: "Remote Address", Width: 15}: *flagFullConnection,
+		table.Column{Title: "Remote Address", Width: 42}: *flagFullConnection,
 		table.Column{Title: "Remote Port", Width: 5}:     *flagFullConnection,
 
 		table.Column{Title: "Status", Width: 11}: *flagConnStatus,
@@ -910,12 +961,12 @@ func main() {
 		// Connection information
 		{Title: "Protocol", Width: 3},
 		// Used when not viewing full connection
-		{Title: "Address", Width: 15},
+		{Title: "Address", Width: 42},
 		{Title: "Port", Width: 5},
 		// Used when viewing full connection
-		{Title: "Local Address", Width: 15},
+		{Title: "Local Address", Width: 42},
 		{Title: "Local Port", Width: 5},
-		{Title: "Remote Address", Width: 15},
+		{Title: "Remote Address", Width: 42},
 		{Title: "Remote Port", Width: 5},
 
 		{Title: "Status", Width: 11},
@@ -971,7 +1022,9 @@ func main() {
 		portFilter:    *flagPortFilter,
 		searchTerm:    "",
 		displaySearch: false,
-		serviceNames: *flagShowProtocolNames,
+		serviceNames:  *flagShowProtocolNames,
+		showIPv6:      *flagShowIPv6,
+		showIPv4:      *flagShowIPv4,
 	}
 
 	// Create text input area
