@@ -916,6 +916,11 @@ func main() {
 	// Help command should be built-in, and populates based in usage field in pflag.TypeP()
 	pflag.Parse()
 
+	if !*flagShowIPv6 && !*flagShowIPv4 {
+		fmt.Println("Error running pvw: Neither IPv4 or IPv6 connections have been allowed. Please enable at least one." + "")
+		os.Exit(1)
+	}
+
 	if *flagAll {
 		*flagPID = true
 		*flagName = true
@@ -932,6 +937,11 @@ func main() {
 	// Create a settings map with columns and bool values. Note that pflag makes the variables pointers,
 	// hence the need for *variable
 
+	addressColumnWidth := 15
+	if *flagShowIPv6 {
+		addressColumnWidth = 44
+	}
+
 	columnSettings := map[table.Column]bool{
 		// Process information
 		table.Column{Title: "PID", Width: 5}:        *flagPID,
@@ -940,14 +950,14 @@ func main() {
 		table.Column{Title: "Owner", Width: 8}:      *flagOwner,
 
 		// Connection information
-		table.Column{Title: "Protocol", Width: 3}: *flagProtocol, // Used when not viewing full connection
-		table.Column{Title: "Address", Width: 42}: *flagShowAddresses && !*flagFullConnection,
-		table.Column{Title: "Port", Width: 5}:     !*flagFullConnection,
+		table.Column{Title: "Protocol", Width: 3}:                 *flagProtocol, // Used when not viewing full connection
+		table.Column{Title: "Address", Width: addressColumnWidth}: *flagShowAddresses && !*flagFullConnection,
+		table.Column{Title: "Port", Width: 5}:                     !*flagFullConnection,
 		// Used when viewing full connection
-		table.Column{Title: "Local Address", Width: 42}:  *flagFullConnection,
-		table.Column{Title: "Local Port", Width: 5}:      *flagFullConnection,
-		table.Column{Title: "Remote Address", Width: 42}: *flagFullConnection,
-		table.Column{Title: "Remote Port", Width: 5}:     *flagFullConnection,
+		table.Column{Title: "Local Address", Width: addressColumnWidth}:  *flagFullConnection,
+		table.Column{Title: "Local Port", Width: 5}:                      *flagFullConnection,
+		table.Column{Title: "Remote Address", Width: addressColumnWidth}: *flagFullConnection,
+		table.Column{Title: "Remote Port", Width: 5}:                     *flagFullConnection,
 
 		table.Column{Title: "Status", Width: 11}: *flagConnStatus,
 	}
@@ -961,12 +971,13 @@ func main() {
 		// Connection information
 		{Title: "Protocol", Width: 3},
 		// Used when not viewing full connection
-		{Title: "Address", Width: 42},
+		{Title: "Address", Width: addressColumnWidth},
 		{Title: "Port", Width: 5},
+
 		// Used when viewing full connection
-		{Title: "Local Address", Width: 42},
+		{Title: "Local Address", Width: addressColumnWidth},
 		{Title: "Local Port", Width: 5},
-		{Title: "Remote Address", Width: 42},
+		{Title: "Remote Address", Width: addressColumnWidth},
 		{Title: "Remote Port", Width: 5},
 
 		{Title: "Status", Width: 11},

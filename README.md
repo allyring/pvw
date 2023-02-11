@@ -24,11 +24,3 @@ If you would like to contribute, then feel free to create an issue or PR with a 
 
 Thanks to @dlvhdr for the idea in the [charmbracelet/inspo](https://github.com/charmbracelet/inspo) repo, as well as
 everyone in the [Charm Discord server](https://charm.sh/chat) for helping answer my questions.
-
-### Future features:
-- Better IPv6 support
-- Save data to JSON
-- Resizable table in config
-- Custom default configs?
-- Flag to enable friendly port names
-
